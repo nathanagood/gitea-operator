@@ -89,10 +89,19 @@ teams:
   members: [ci-bot]
 ```
 
-> **Upgrading:** older CRDs defaulted `memberPolicy` to `Exact`, and that
-> value was saved on every team created then. A saved `Exact` overrides the
-> group-mapped default, so remove the field from those teams (or recreate the
-> Org) to use it.
+> **Upgrading:** older CRDs defaulted `memberPolicy` to `Exact`. Two things
+> keep that behaviour after an upgrade:
+>
+> 1. **The default stays in the CRD.** `kubectl apply`, and the operator's own
+>    server-side apply of its CRDs at startup, don't remove a field that another
+>    field manager set, so the old `default: Exact` survives. Replace the CRD
+>    instead:
+>    `kubectl replace -f config/crd/bases/hyperspike.io_orgs.yaml`.
+>    Check with
+>    `kubectl get crd orgs.hyperspike.io -o yaml | grep -A3 memberPolicy:`.
+> 2. **The value is saved on existing teams.** Every team created under the old
+>    CRD has `memberPolicy: Exact` stored, which overrides the group-mapped
+>    default. Remove the field from those teams (or recreate the Org).
 
 ## Operator configuration
 
