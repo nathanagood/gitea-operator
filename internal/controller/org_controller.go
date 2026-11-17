@@ -291,6 +291,9 @@ func (r *OrgReconciler) upsertTeam(ctx context.Context, team *hyperv1.Team, orgN
 
 func (r *OrgReconciler) reconcileMembers(ctx context.Context, team *hyperv1.Team, id int64) error {
 	logger := log.FromContext(ctx)
+	if team.MemberPolicy == hyperv1.TeamMemberPolicyIgnore {
+		return nil
+	}
 	users, _, err := r.h.ListTeamMembers(id, g.ListTeamMembersOptions{})
 	if err != nil {
 		return err
@@ -310,6 +313,9 @@ func (r *OrgReconciler) reconcileMembers(ctx context.Context, team *hyperv1.Team
 		}
 	}
 	for _, gUser := range users {
+		if team.MemberPolicy == hyperv1.TeamMemberPolicyAdditive {
+			break
+		}
 		rem := true
 		for _, user := range team.Members {
 			if user == gUser.UserName {

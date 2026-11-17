@@ -67,7 +67,25 @@ type Team struct {
 	IncludeAllRepos bool     `json:"includeAllRepos,omitempty"`
 	Members         []string `json:"members,omitempty"`
 	Units           []string `json:"units,omitempty"`
+
+	// How the operator reconciles Members:
+	// Exact removes anyone not listed; Additive only adds listed members and
+	// leaves others (use for teams filled by an Auth groupTeamMap);
+	// Ignore never touches membership.
+	// +kubebuilder:validation:Enum=Exact;Additive;Ignore
+	// +kubebuilder:default=Exact
+	// +optional
+	MemberPolicy TeamMemberPolicy `json:"memberPolicy,omitempty"`
 }
+
+// TeamMemberPolicy controls how team membership is reconciled.
+type TeamMemberPolicy string
+
+const (
+	TeamMemberPolicyExact    TeamMemberPolicy = "Exact"
+	TeamMemberPolicyAdditive TeamMemberPolicy = "Additive"
+	TeamMemberPolicyIgnore   TeamMemberPolicy = "Ignore"
+)
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status

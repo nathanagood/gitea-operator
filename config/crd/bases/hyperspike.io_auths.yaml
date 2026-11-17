@@ -14,7 +14,20 @@ spec:
     singular: auth
   scope: Namespaced
   versions:
-  - name: v1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.name
+      name: Source
+      type: string
+    - jsonPath: .status.sourceId
+      name: ID
+      type: integer
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
     schema:
       openAPIV3Schema:
         description: Auth is the Schema for the auths API
@@ -37,13 +50,21 @@ spec:
           metadata:
             type: object
           spec:
-            description: AuthSpec defines the desired state of Auth
+            description: |-
+              AuthSpec defines the desired state of an OAuth2 authentication source.
+              Every field maps to a flag of `gitea admin auth add-oauth`.
             properties:
+              adminGroup:
+                description: Group whose members are made Gitea site administrators.
+                type: string
               autoDiscoveryURL:
-                description: The URL to the OIDC provider (e.g. https://oidc.example.com)
+                description: |-
+                  The OpenID Connect discovery document URL
+                  (e.g. https://example.verify.ibm.com/oidc/endpoint/default/.well-known/openid-configuration).
+                  Required when provider is openidConnect.
                 type: string
               clientID:
-                description: The client ID for the OIDC provider
+                description: The client ID for the OAuth2 provider
                 properties:
                   key:
                     description: The key of the secret to select from.  Must be a
@@ -66,7 +87,7 @@ spec:
                 type: object
                 x-kubernetes-map-type: atomic
               clientSecret:
-                description: The client secret for the OIDC provider
+                description: The client secret for the OAuth2 provider
                 properties:
                   key:
                     description: The key of the secret to select from.  Must be a
@@ -88,11 +109,54 @@ spec:
                 - key
                 type: object
                 x-kubernetes-map-type: atomic
+              customURLs:
+                description: Custom endpoint URLs for providers that support them.
+                properties:
+                  authURL:
+                    type: string
+                  emailURL:
+                    type: string
+                  profileURL:
+                    type: string
+                  tenantID:
+                    type: string
+                  tokenURL:
+                    type: string
+                type: object
+              deletionPolicy:
+                default: Retain
+                description: What to do with the Gitea source when this resource is
+                  deleted.
+                enum:
+                - Retain
+                - Delete
+                type: string
+              fullNameClaimName:
+                description: Claim that provides the user's full name.
+                type: string
               groupClaimName:
-                description: Group Claim name to use for group membership
+                description: Claim that provides the user's group names (e.g. blue_groups).
+                type: string
+              groupTeamMap:
+                additionalProperties:
+                  additionalProperties:
+                    items:
+                      type: string
+                    type: array
+                  type: object
+                description: |-
+                  Maps group claim values to organization teams. On sign-in Gitea adds
+                  the user to the teams mapped from each of their groups.
+                type: object
+              groupTeamMapRemoval:
+                description: Remove users from mapped teams when they no longer have
+                  the group.
+                type: boolean
+              iconURL:
+                description: Custom icon URL shown on the sign-in button.
                 type: string
               instance:
-                description: The Gitea instance to add the OIDC authentication to
+                description: The Gitea instance to add the authentication source to
                 properties:
                   labels:
                     additionalProperties:
@@ -105,24 +169,111 @@ spec:
                 required:
                 - name
                 type: object
+              name:
+                description: |-
+                  The authentication source name shown in Gitea (e.g. "IBM Security Verify").
+                  Used to find an existing source. Defaults to metadata.name.
+                type: string
               provider:
+                description: The OAuth2 provider, e.g. openidConnect, github, gitlab,
+                  azureadv2.
+                type: string
+              requiredClaimName:
+                description: Claim that must be present for a user to sign in with
+                  this source.
+                type: string
+              requiredClaimValue:
+                description: Value the required claim must have (any value when empty).
+                type: string
+              restrictedGroup:
+                description: Group whose members are made restricted users.
                 type: string
               scopes:
-                description: Scopes to request from the OIDC provider
+                description: Additional scopes to request from the provider.
                 items:
                   type: string
                 type: array
+              skipLocal2FA:
+                description: Skip local two-factor authentication for users of this
+                  source.
+                type: boolean
+              sshPublicKeyClaimName:
+                description: Claim that provides the user's SSH public keys.
+                type: string
             required:
-            - autoDiscoveryURL
             - clientID
             - clientSecret
-            - groupClaimName
             - instance
             - provider
-            - scopes
             type: object
           status:
             description: AuthStatus defines the observed state of Auth
+            properties:
+              appliedHash:
+                description: Hash of the last configuration (including secret values)
+                  applied to Gitea.
+                type: string
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              sourceId:
+                description: The Gitea authentication source ID (what User.spec.sourceId
+                  refers to).
+                format: int64
+                type: integer
             type: object
         type: object
     served: true

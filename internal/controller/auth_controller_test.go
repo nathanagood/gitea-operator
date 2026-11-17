@@ -55,7 +55,10 @@ var _ = Describe("Auth Controller", func() {
 						Name:      resourceName,
 						Namespace: DEFAULT,
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: hyperspikeiov1.AuthSpec{
+						Provider: "openidConnect",
+						Instance: hyperspikeiov1.InstanceType{Name: "missing-gitea"},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
@@ -70,7 +73,7 @@ var _ = Describe("Auth Controller", func() {
 			By("Cleanup the specific resource instance Auth")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
-		It("should successfully reconcile the resource", func() {
+		It("should report a missing Gitea instance", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &AuthReconciler{
 				Client: k8sClient,
@@ -80,9 +83,8 @@ var _ = Describe("Auth Controller", func() {
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
-			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("getting gitea instance"))
 		})
 	})
 })

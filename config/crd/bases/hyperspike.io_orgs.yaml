@@ -79,6 +79,18 @@ spec:
                       type: string
                     includeAllRepos:
                       type: boolean
+                    memberPolicy:
+                      default: Exact
+                      description: |-
+                        How the operator reconciles Members:
+                        Exact removes anyone not listed; Additive only adds listed members and
+                        leaves others (use for teams filled by an Auth groupTeamMap);
+                        Ignore never touches membership.
+                      enum:
+                      - Exact
+                      - Additive
+                      - Ignore
+                      type: string
                     members:
                       items:
                         type: string
