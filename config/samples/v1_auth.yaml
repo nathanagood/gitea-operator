@@ -1,3 +1,9 @@
+# An OpenID Connect authentication source with group-to-team sync.
+# See "Authentication sources" and "Team membership" in the README.
+#
+# Create the credentials Secret first; it is never stored in the resource:
+#   kubectl create secret generic auth-sample-oidc \
+#     --from-literal=client-id=... --from-literal=client-secret=...
 apiVersion: hyperspike.io/v1
 kind: Auth
 metadata:
@@ -6,4 +12,63 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: auth-sample
 spec:
-  # TODO(user): Add fields here
+  # Display name in Gitea, and the key used to find an existing source. Use the
+  # exact name of a source created in the web UI to adopt it in place.
+  name: Example OIDC
+  # Gitea OAuth2 provider: openidConnect, github, gitlab, gitea, azuread, ...
+  provider: openidConnect
+  clientID:
+    name: auth-sample-oidc
+    key: client-id
+  clientSecret:
+    name: auth-sample-oidc
+    key: client-secret
+  autoDiscoveryURL: https://idp.example.com/.well-known/openid-configuration
+  # iconURL: https://idp.example.com/logo.png
+  # Only for providers with configurable endpoints (gitea, gitlab, ...):
+  # customURLs:
+  #   authURL: https://...
+  #   tokenURL: https://...
+  #   profileURL: https://...
+  #   emailURL: https://...
+  scopes:
+  - openid
+  - email
+  - profile
+  # true skips Gitea's own 2FA for users of this source.
+  skipLocal2FA: false
+
+  # Only allow sign-in when the claim has this value.
+  # requiredClaimName: department
+  # requiredClaimValue: engineering
+
+  # Claim that lists the user's groups. Required for the group settings below.
+  groupClaimName: groups
+  # Members of this group become site admins; others lose admin at sign-in.
+  # adminGroup: gitea-admins
+  # Members of this group become restricted users.
+  # restrictedGroup: contractors
+
+  # group -> { org -> [teams] }. Applied when a user signs in. Orgs and teams
+  # must already exist (missing ones are skipped with a warning) and are
+  # matched case-insensitively.
+  #
+  # Org teams listed here are owned by the identity provider: an Org team with
+  # no memberPolicy set is left alone by the operator instead of being synced
+  # to its `members` list (see config/samples/org.yaml).
+  groupTeamMap:
+    developers:
+      test: [Developers]
+    admins:
+      test: [Test, Developers]
+  # true also removes users from mapped teams when they lose the group.
+  groupTeamMapRemoval: true
+
+  # sshPublicKeyClaimName: ssh_keys
+  # fullNameClaimName: name
+
+  # Retain (default) leaves the source in Gitea when this resource is deleted;
+  # Delete removes it (Gitea refuses while users are bound to it).
+  deletionPolicy: Retain
+  instance:
+    name: gitea

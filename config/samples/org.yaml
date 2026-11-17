@@ -9,8 +9,25 @@ spec:
   description: Test Env for Operator
   instance:
     name: gitea
+  # memberPolicy controls what the operator does with `members`:
+  #   Exact     add listed members, remove everyone else
+  #   Additive  add listed members, never remove anyone
+  #   Ignore    never touch membership
+  #   (unset)   Ignore if an Auth for this instance maps a group to the team
+  #             in groupTeamMap (see v1_auth.yaml), otherwise Exact
   teams:
+  # Mapped by auth-sample (admins group) and no memberPolicy: the identity
+  # provider owns membership, but this explicit Additive also keeps `demo`.
   - name: Test
     permission: admin
+    memberPolicy: Additive
+    members:
+    - demo
+  # Mapped by auth-sample (developers group) and no memberPolicy: Ignore.
+  - name: Developers
+    permission: write
+  # Not mapped and no memberPolicy: Exact, so members are exactly this list.
+  - name: Bots
+    permission: read
     members:
     - demo
