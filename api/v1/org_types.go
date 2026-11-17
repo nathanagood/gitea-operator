@@ -70,10 +70,11 @@ type Team struct {
 
 	// How the operator reconciles Members:
 	// Exact removes anyone not listed; Additive only adds listed members and
-	// leaves others (use for teams filled by an Auth groupTeamMap);
-	// Ignore never touches membership.
+	// leaves others; Ignore never touches membership.
+	// When unset, the team is Ignore if any Auth for the same Gitea instance
+	// maps a group to it in groupTeamMap (the identity provider owns its
+	// membership), and Exact otherwise.
 	// +kubebuilder:validation:Enum=Exact;Additive;Ignore
-	// +kubebuilder:default=Exact
 	// +optional
 	MemberPolicy TeamMemberPolicy `json:"memberPolicy,omitempty"`
 }
