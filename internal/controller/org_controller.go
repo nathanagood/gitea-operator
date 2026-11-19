@@ -229,31 +229,7 @@ func (r *OrgReconciler) upsertTeam(ctx context.Context, team *hyperv1.Team, orgN
 			matched = true
 		}
 	}
-	var perm g.AccessMode
-	switch team.Permission {
-	case "owner":
-		perm = g.AccessModeOwner
-	case "admin":
-		perm = g.AccessModeAdmin
-	case "write":
-		perm = g.AccessModeWrite
-	case "read":
-		perm = g.AccessModeRead
-	default:
-		perm = g.AccessModeNone
-	}
-	units := []g.RepoUnitType{
-		g.RepoUnitCode,
-		g.RepoUnitIssues,
-		g.RepoUnitPulls,
-		g.RepoUnitExtIssues,
-		g.RepoUnitWiki,
-		g.RepoUnitExtWiki,
-		g.RepoUnitReleases,
-		g.RepoUnitProjects,
-		g.RepoUnitPackages,
-		g.RepoUnitActions,
-	}
+	access := teamAccessFor(team)
 	if matched {
 		fetched, res, err := r.h.GetTeam(id)
 		if err != nil && res.StatusCode != 404 {
@@ -269,9 +245,10 @@ func (r *OrgReconciler) upsertTeam(ctx context.Context, team *hyperv1.Team, orgN
 					Description:             &team.Description,
 					CanCreateOrgRepo:        &team.CreateOrgRepo,
 					IncludesAllRepositories: &team.IncludeAllRepos,
-					Permission:              perm,
+					Permission:              access.Permission,
 					Name:                    team.Name,
-					Units:                   units,
+					Units:                   access.Units,
+					UnitsMap:                access.UnitsMap,
 				}); err != nil {
 					logger.Error(err, "failed to update team", "team", team.Name)
 					return err
@@ -285,8 +262,9 @@ func (r *OrgReconciler) upsertTeam(ctx context.Context, team *hyperv1.Team, orgN
 		Description:             team.Description,
 		CanCreateOrgRepo:        team.CreateOrgRepo,
 		IncludesAllRepositories: team.IncludeAllRepos,
-		Permission:              perm,
-		Units:                   units,
+		Permission:              access.Permission,
+		Units:                   access.Units,
+		UnitsMap:                access.UnitsMap,
 	})
 	if err != nil {
 		logger.Error(err, "failed to create team", "team", team.Name)

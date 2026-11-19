@@ -59,6 +59,33 @@ doesn't exist, Gitea logs a warning and skips it; sign-in still works. With
 `groupTeamMapRemoval: true`, a user who no longer has a group is removed from
 that group's teams at their next sign-in. Only teams in the map are affected.
 
+## Team access (`permission`, `units`, `unitsMap`)
+
+| Team setting | Result in Gitea |
+|---|---|
+| `permission: owner` or `admin` | Admin access to every unit; `units` and `unitsMap` are ignored. |
+| `unitsMap` | Each listed unit at its own level (`none`, `read`, `write`). |
+| `permission: read` or `write` | That level on every unit in `units` (all units if `units` is empty). |
+| nothing set | `read` on every unit in `units` (all units if empty). |
+
+Use `unitsMap` for teams whose units have different levels, which is what
+Gitea's "per-unit" team permissions in the web UI produce:
+
+```yaml
+teams:
+- name: Contributors
+  unitsMap:
+    repo.code: write
+    repo.issues: write
+    repo.pulls: write
+    repo.wiki: read
+    repo.releases: read
+```
+
+Unit keys are `repo.code`, `repo.issues`, `repo.pulls`, `repo.ext_issues`,
+`repo.wiki`, `repo.ext_wiki`, `repo.releases`, `repo.projects`,
+`repo.packages`, and `repo.actions`.
+
 ## Team membership (`memberPolicy`)
 
 Each team in an `Org` has a `memberPolicy` that controls what the operator does

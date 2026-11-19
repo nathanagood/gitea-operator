@@ -24,8 +24,14 @@ spec:
     members:
     - demo
   # Mapped by auth-sample (developers group) and no memberPolicy: Ignore.
+  # unitsMap sets each unit's access separately (none, read, write).
   - name: Developers
-    permission: write
+    unitsMap:
+      repo.code: write
+      repo.issues: write
+      repo.pulls: write
+      repo.wiki: read
+      repo.releases: read
   # Not mapped and no memberPolicy: Exact, so members are exactly this list.
   - name: Bots
     permission: read
