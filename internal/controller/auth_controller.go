@@ -74,6 +74,7 @@ type giteaAuthSource struct {
 // +kubebuilder:rbac:groups=hyperspike.io,resources=auths/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods/exec,verbs=create
+// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 // Reconcile creates or updates the Gitea authentication source described by an Auth.
@@ -104,7 +105,7 @@ func (r *AuthReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	if deleting {
-		return ctrl.Result{}, r.deleteSource(ctx, auth, pod)
+		return ctrl.Result{}, r.deleteSource(ctx, gitea, auth, pod)
 	}
 	if controllerutil.AddFinalizer(auth, authFinalizer) {
 		if err := r.Update(ctx, auth); err != nil {
@@ -112,7 +113,7 @@ func (r *AuthReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		}
 	}
 
-	if err := r.applySource(ctx, auth, pod); err != nil {
+	if err := r.applySource(ctx, gitea, auth, pod); err != nil {
 		_ = r.setReady(ctx, auth, metav1.ConditionFalse, "ApplyFailed", err.Error())
 		return ctrl.Result{}, err
 	}
@@ -120,8 +121,9 @@ func (r *AuthReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 }
 
 // applySource adds or updates the Gitea source when it is missing or its
-// configuration (including secret values) changed since the last apply.
-func (r *AuthReconciler) applySource(ctx context.Context, auth *hyperv1.Auth, pod *corev1.Pod) error {
+// configuration (including secret values) changed since the last apply, then
+// restarts Gitea so the running server loads it.
+func (r *AuthReconciler) applySource(ctx context.Context, gitea *hyperv1.Gitea, auth *hyperv1.Auth, pod *corev1.Pod) error {
 	logger := log.FromContext(ctx)
 
 	clientID, err := r.secretValue(ctx, auth.Namespace, auth.Spec.ClientID)
@@ -143,6 +145,11 @@ func (r *AuthReconciler) applySource(ctx context.Context, auth *hyperv1.Auth, po
 		return err
 	}
 	if existing != nil && existing.ID == auth.Status.SourceID && hash == auth.Status.AppliedHash {
+		// Also covers an operator upgrade: a source applied before restarts
+		// were added gets one restart here, then none.
+		if err := r.restartGiteaForAuth(ctx, gitea, auth, hash); err != nil {
+			return err
+		}
 		return r.setReady(ctx, auth, metav1.ConditionTrue, "InSync", "authentication source is up to date")
 	}
 
@@ -166,14 +173,17 @@ func (r *AuthReconciler) applySource(ctx context.Context, auth *hyperv1.Auth, po
 			return fmt.Errorf("authentication source %q not found after add-oauth", sourceName(auth))
 		}
 	}
+	if err := r.restartGiteaForAuth(ctx, gitea, auth, hash); err != nil {
+		return err
+	}
 	auth.Status.SourceID = existing.ID
 	auth.Status.AppliedHash = hash
-	return r.applyStatus(ctx, auth, metav1.ConditionTrue, "Applied", "authentication source applied")
+	return r.applyStatus(ctx, auth, metav1.ConditionTrue, "Applied", "authentication source applied; restarting Gitea to load it")
 }
 
-// deleteSource removes the Gitea source (deletionPolicy: Delete), then
-// releases the finalizer.
-func (r *AuthReconciler) deleteSource(ctx context.Context, auth *hyperv1.Auth, pod *corev1.Pod) error {
+// deleteSource removes the Gitea source (deletionPolicy: Delete), restarts
+// Gitea to unload it, then releases the finalizer.
+func (r *AuthReconciler) deleteSource(ctx context.Context, gitea *hyperv1.Gitea, auth *hyperv1.Auth, pod *corev1.Pod) error {
 	if !controllerutil.ContainsFinalizer(auth, authFinalizer) {
 		return nil
 	}
@@ -182,6 +192,9 @@ func (r *AuthReconciler) deleteSource(ctx context.Context, auth *hyperv1.Auth, p
 		if _, err := r.runGitea(ctx, pod, args, "", ""); err != nil {
 			return fmt.Errorf("deleting authentication source %d: %w", auth.Status.SourceID, err)
 		}
+	}
+	if err := r.restartGiteaForAuth(ctx, gitea, auth, ""); err != nil {
+		return err
 	}
 	return r.releaseFinalizer(ctx, auth)
 }

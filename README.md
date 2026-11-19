@@ -26,6 +26,12 @@ why the operator's role includes `pods/exec`).
   are overwritten. The operator re-checks every 10 minutes and skips the update
   when nothing changed. Secrets are not watched, so a rotated client secret is
   picked up within 10 minutes (or edit the `Auth` to apply it immediately).
+- **Restarts Gitea:** the CLI only changes the database; the running server
+  loads OAuth2 providers at startup. So after it adds, changes, or deletes a
+  source, the operator restarts the Gitea StatefulSet by setting the pod
+  template annotation `auth.hyperspike.io/<namespace>.<name>` to the applied
+  config hash. Expect a brief outage on every change to an `Auth` or its
+  Secret; an unchanged config never restarts Gitea.
 - **Deletion:** with `deletionPolicy: Retain` (the default), deleting the `Auth`
   leaves the source in Gitea. With `Delete`, the operator deletes it; Gitea
   refuses if users are still bound to the source.
