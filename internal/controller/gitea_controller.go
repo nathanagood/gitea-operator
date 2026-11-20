@@ -581,7 +581,7 @@ echo '==== END GITEA CONFIGURATION ===='`,
       unset GITEA__SERVER__LFS_JWT_SECRET
     fi
 
-    environment-to-ini -o $GITEA_APP_INI`,
+    environment-to-ini --config $GITEA_APP_INI`,
 	}, false); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1278,28 +1278,9 @@ func (r *GiteaReconciler) upsertGiteaRole(ctx context.Context, gitea *hyperv1.Gi
 			Namespace: gitea.Namespace,
 			Labels:    labels(gitea.Name),
 		},
-		Rules: []rbacv1.PolicyRule{
-			{
-				APIGroups: []string{"hyperspike.io"},
-				Resources: []string{"auths"},
-				Verbs:     []string{"get", "list", "watch"},
-			},
-			{
-				APIGroups: []string{"hyperspike.io"},
-				Resources: []string{"auths/status"},
-				Verbs:     []string{"get", "update", "patch"},
-			},
-			{
-				APIGroups: []string{"hyperspike.io"},
-				Resources: []string{"auths/finalizers"},
-				Verbs:     []string{"update"},
-			},
-			{
-				APIGroups: []string{""},
-				Resources: []string{"secrets"},
-				Verbs:     []string{"get", "list", "watch"},
-			},
-		},
+		// The gitea-spoon sidecar no longer reconciles Auth resources (the
+		// operator's AuthReconciler does), so the pod needs no API access.
+		Rules: []rbacv1.PolicyRule{},
 	}
 	if err := controllerutil.SetControllerReference(gitea, role, r.Scheme); err != nil {
 		return err
@@ -1779,8 +1760,17 @@ func image(gitea *hyperv1.Gitea) string {
 	return gitea.Spec.Image
 }
 
+// defaultSpoonImage must be a gitea-spoon build without its Auth controller;
+// upstream releases up to v0.0.5 still reconcile Auth and conflict with the
+// operator's AuthReconciler.
+const defaultSpoonImage = "ghcr.io/hyperspike/gitea-spoon:v0.0.5"
+
+// imageSpoon returns the sidecar image, overridable with SPOON_IMAGE.
 func imageSpoon() string {
-	return "ghcr.io/hyperspike/gitea-spoon:v0.0.5"
+	if img := strings.TrimSpace(os.Getenv("SPOON_IMAGE")); img != "" {
+		return img
+	}
+	return defaultSpoonImage
 }
 
 var vol = map[string]string{

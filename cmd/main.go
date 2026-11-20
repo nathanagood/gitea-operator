@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"strings"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -113,9 +114,19 @@ func main() {
 		TLSOpts: tlsOpts,
 	})
 
+	// WATCH_NAMESPACES (comma-separated) overrides the namespaces the
+	// operator watches; the defaults keep the upstream behavior.
 	var namespaces = []string{
 		"default",
 		"cert-manager",
+	}
+	if watch := strings.TrimSpace(os.Getenv("WATCH_NAMESPACES")); watch != "" {
+		namespaces = nil
+		for _, ns := range strings.Split(watch, ",") {
+			if ns = strings.TrimSpace(ns); ns != "" {
+				namespaces = append(namespaces, ns)
+			}
+		}
 	}
 	defaultNamespaces := make(map[string]cache.Config)
 
@@ -191,9 +202,15 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "Runner")
 		os.Exit(1)
 	}
+	podExecutor, err := controller.NewSPDYPodExecutor(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "unable to create pod executor")
+		os.Exit(1)
+	}
 	if err = (&controller.AuthReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Executor: podExecutor,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Auth")
 		os.Exit(1)

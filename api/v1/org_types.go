@@ -61,13 +61,46 @@ type Team struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 
+	// Team-wide access. admin and owner give admin access to every unit and
+	// ignore units/unitsMap. read and write apply to every unit in `units`.
+	// Unset or none means read, unless unitsMap is set.
 	// +kubebuilder:validation:Enum=none;read;write;admin;owner
 	Permission      string   `json:"permission,omitempty"`
 	CreateOrgRepo   bool     `json:"createOrgRepo,omitempty"`
 	IncludeAllRepos bool     `json:"includeAllRepos,omitempty"`
 	Members         []string `json:"members,omitempty"`
-	Units           []string `json:"units,omitempty"`
+	// Repository units the team can use (repo.code, repo.issues, ...), all at
+	// `permission`. Empty means every unit.
+	Units []string `json:"units,omitempty"`
+	// Access level per unit, such as {repo.code: write, repo.wiki: read}.
+	// Use this for teams whose units have different levels. For read/write
+	// teams it replaces `units` and `permission`.
+	// +optional
+	UnitsMap map[string]TeamUnitAccess `json:"unitsMap,omitempty"`
+
+	// How the operator reconciles Members:
+	// Exact removes anyone not listed; Additive only adds listed members and
+	// leaves others; Ignore never touches membership.
+	// When unset, the team is Ignore if any Auth for the same Gitea instance
+	// maps a group to it in groupTeamMap (the identity provider owns its
+	// membership), and Exact otherwise.
+	// +kubebuilder:validation:Enum=Exact;Additive;Ignore
+	// +optional
+	MemberPolicy TeamMemberPolicy `json:"memberPolicy,omitempty"`
 }
+
+// TeamUnitAccess is a team's access level for one repository unit.
+// +kubebuilder:validation:Enum=none;read;write
+type TeamUnitAccess string
+
+// TeamMemberPolicy controls how team membership is reconciled.
+type TeamMemberPolicy string
+
+const (
+	TeamMemberPolicyExact    TeamMemberPolicy = "Exact"
+	TeamMemberPolicyAdditive TeamMemberPolicy = "Additive"
+	TeamMemberPolicyIgnore   TeamMemberPolicy = "Ignore"
+)
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status

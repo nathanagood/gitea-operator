@@ -79,6 +79,19 @@ spec:
                       type: string
                     includeAllRepos:
                       type: boolean
+                    memberPolicy:
+                      description: |-
+                        How the operator reconciles Members:
+                        Exact removes anyone not listed; Additive only adds listed members and
+                        leaves others; Ignore never touches membership.
+                        When unset, the team is Ignore if any Auth for the same Gitea instance
+                        maps a group to it in groupTeamMap (the identity provider owns its
+                        membership), and Exact otherwise.
+                      enum:
+                      - Exact
+                      - Additive
+                      - Ignore
+                      type: string
                     members:
                       items:
                         type: string
@@ -86,6 +99,10 @@ spec:
                     name:
                       type: string
                     permission:
+                      description: |-
+                        Team-wide access. admin and owner give admin access to every unit and
+                        ignore units/unitsMap. read and write apply to every unit in `units`.
+                        Unset or none means read, unless unitsMap is set.
                       enum:
                       - none
                       - read
@@ -94,9 +111,26 @@ spec:
                       - owner
                       type: string
                     units:
+                      description: |-
+                        Repository units the team can use (repo.code, repo.issues, ...), all at
+                        `permission`. Empty means every unit.
                       items:
                         type: string
                       type: array
+                    unitsMap:
+                      additionalProperties:
+                        description: TeamUnitAccess is a team's access level for one
+                          repository unit.
+                        enum:
+                        - none
+                        - read
+                        - write
+                        type: string
+                      description: |-
+                        Access level per unit, such as {repo.code: write, repo.wiki: read}.
+                        Use this for teams whose units have different levels. For read/write
+                        teams it replaces `units` and `permission`.
+                      type: object
                   required:
                   - name
                   type: object

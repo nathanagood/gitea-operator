@@ -4,7 +4,146 @@ A Kubernetes-Operator to deploy and Manage [Gitea](https://github.com/go-gitea/g
 
 ## Description
 
-deploy a gitea instance and manage users, ssh keys, organizations, organization teams, and repos.
+deploy a gitea instance and manage users, ssh keys, organizations, organization teams, repos, and authentication sources.
+
+## Authentication sources (`Auth`)
+
+An `Auth` resource manages an OAuth2/OpenID Connect authentication source
+(Site Administration > Authentication Sources). See
+[`config/samples/v1_auth.yaml`](config/samples/v1_auth.yaml) for a commented
+example.
+
+Gitea has no REST API for authentication sources, so the operator runs
+`gitea admin auth add-oauth` / `update-oauth` inside a ready Gitea pod (which is
+why the operator's role includes `pods/exec`).
+
+- **Matching:** the source is found by `spec.name`. If a source with that name
+  already exists, it is adopted and updated in place, keeping its ID. The ID is
+  reported in `status.sourceId`, which is what `User.spec.sourceId` refers to.
+- **Credentials:** `clientID` and `clientSecret` are Secret key references and
+  are never stored in the resource.
+- **Drift:** every flag is passed on each update, so changes made in the web UI
+  are overwritten. The operator re-checks every 10 minutes and skips the update
+  when nothing changed. Secrets are not watched, so a rotated client secret is
+  picked up within 10 minutes (or edit the `Auth` to apply it immediately).
+- **Restarts Gitea:** the CLI only changes the database; the running server
+  loads OAuth2 providers at startup. So after it adds, changes, or deletes a
+  source, the operator restarts the Gitea StatefulSet by setting the pod
+  template annotation `auth.hyperspike.io/<namespace>.<name>` to the applied
+  config hash. Expect a brief outage on every change to an `Auth` or its
+  Secret; an unchanged config never restarts Gitea.
+- **Deletion:** with `deletionPolicy: Retain` (the default), deleting the `Auth`
+  leaves the source in Gitea. With `Delete`, the operator deletes it; Gitea
+  refuses if users are still bound to the source.
+- **Not settable:** Gitea's CLI has no flag for the external ID claim, so it
+  keeps whatever value it has.
+
+### Group claims to teams
+
+`groupClaimName` names the claim that lists the user's groups (for IBM Security
+Verify, `blue_groups`). `groupTeamMap` maps each group to the org teams its
+members join:
+
+```yaml
+groupClaimName: blue_groups
+groupTeamMap:
+  ITZ_ACL_development:      # group name, as it appears in the claim
+    itz: [Development]      # org: [teams]
+    itz-content: [Development]
+groupTeamMapRemoval: true   # also remove users who lost the group
+```
+
+Gitea applies the map **when a user signs in**, not when the map changes.
+Org and team names are matched case-insensitively. If a mapped org or team
+doesn't exist, Gitea logs a warning and skips it; sign-in still works. With
+`groupTeamMapRemoval: true`, a user who no longer has a group is removed from
+that group's teams at their next sign-in. Only teams in the map are affected.
+
+## Team access (`permission`, `units`, `unitsMap`)
+
+| Team setting | Result in Gitea |
+|---|---|
+| `permission: owner` or `admin` | Admin access to every unit; `units` and `unitsMap` are ignored. |
+| `unitsMap` | Each listed unit at its own level (`none`, `read`, `write`). |
+| `permission: read` or `write` | That level on every unit in `units` (all units if `units` is empty). |
+| nothing set | `read` on every unit in `units` (all units if empty). |
+
+Use `unitsMap` for teams whose units have different levels, which is what
+Gitea's "per-unit" team permissions in the web UI produce:
+
+```yaml
+teams:
+- name: Contributors
+  unitsMap:
+    repo.code: write
+    repo.issues: write
+    repo.pulls: write
+    repo.wiki: read
+    repo.releases: read
+```
+
+Unit keys are `repo.code`, `repo.issues`, `repo.pulls`, `repo.ext_issues`,
+`repo.wiki`, `repo.ext_wiki`, `repo.releases`, `repo.projects`,
+`repo.packages`, and `repo.actions`.
+
+## Team membership (`memberPolicy`)
+
+Each team in an `Org` has a `memberPolicy` that controls what the operator does
+with the team's `members` list:
+
+| `memberPolicy` | Adds listed members | Removes unlisted members |
+|---|---|---|
+| `Exact` | yes | yes |
+| `Additive` | yes | no |
+| `Ignore` | no | no |
+| *(unset)* | `Ignore` if the team is group-mapped, otherwise `Exact` | |
+
+When `memberPolicy` is unset, a team counts as **group-mapped** if any `Auth`
+for the same Gitea instance (and not being deleted) lists it in
+`groupTeamMap`. The identity provider owns that team's membership, so the
+operator leaves it alone; otherwise the operator would remove the users Gitea
+added at sign-in. This applies whether or not `groupTeamMapRemoval` is set.
+The Org controller watches `Auth` resources, so editing a `groupTeamMap` takes
+effect right away.
+
+Set `memberPolicy` explicitly to override this. For example, use `Additive` to
+guarantee a service account is in a group-mapped team while still letting
+group sync add people:
+
+```yaml
+teams:
+- name: Development      # group-mapped: membership comes from the IdP
+  permission: write
+- name: Owners
+  permission: owner
+  memberPolicy: Additive # group-mapped, but always keep this account
+  members: [ci-bot]
+- name: automation       # not mapped: members are exactly this list
+  members: [ci-bot]
+```
+
+> **Upgrading:** older CRDs defaulted `memberPolicy` to `Exact`. Two things
+> keep that behaviour after an upgrade:
+>
+> 1. **The default stays in the CRD.** `kubectl apply`, and the operator's own
+>    server-side apply of its CRDs at startup, don't remove a field that another
+>    field manager set, so the old `default: Exact` survives. Replace the CRD
+>    instead:
+>    `kubectl replace -f config/crd/bases/hyperspike.io_orgs.yaml`.
+>    Check with
+>    `kubectl get crd orgs.hyperspike.io -o yaml | grep -A3 memberPolicy:`.
+> 2. **The value is saved on existing teams.** Every team created under the old
+>    CRD has `memberPolicy: Exact` stored, which overrides the group-mapped
+>    default. Remove the field from those teams (or recreate the Org).
+
+## Operator configuration
+
+Environment variables on the manager deployment:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `WATCH_NAMESPACES` | `default,cert-manager` | Comma-separated namespaces the operator watches. Gitea resources outside these are ignored. |
+| `SPOON_IMAGE` | `ghcr.io/hyperspike/gitea-spoon:v0.0.5` | Image for the gitea-spoon sidecar in each Gitea pod. |
 
 ## Getting Started
 

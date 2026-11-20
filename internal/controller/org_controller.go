@@ -26,6 +26,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	hyperv1 "hyperspike.io/gitea-operator/api/v1"
@@ -44,6 +45,7 @@ const orgFinalizer = "org.hyperspike.io/finalizer"
 // +kubebuilder:rbac:groups=hyperspike.io,resources=orgs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=hyperspike.io,resources=orgs/finalizers,verbs=update
 // +kubebuilder:rbac:groups=hyperspike.io,resources=gitea,verbs=get;list;watch
+// +kubebuilder:rbac:groups=hyperspike.io,resources=auths,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -179,6 +181,10 @@ func compareTeams(team1, team2 *g.Team) bool {
 }
 
 func (r *OrgReconciler) reconcileTeams(ctx context.Context, org *hyperv1.Org) error {
+	mapped, err := r.listGroupMappedTeams(ctx, org)
+	if err != nil {
+		return err
+	}
 	teams, _, err := r.h.SearchOrgTeams(org.Name, &g.SearchTeamsOptions{})
 	if err != nil {
 		return err
@@ -197,7 +203,7 @@ func (r *OrgReconciler) reconcileTeams(ctx context.Context, org *hyperv1.Org) er
 		}
 	}
 	for _, t := range org.Spec.Teams {
-		if err := r.upsertTeam(ctx, &t, org.Name); err != nil {
+		if err := r.upsertTeam(ctx, &t, org.Name, effectiveMemberPolicy(&t, mapped)); err != nil {
 			return err
 		}
 	}
@@ -209,7 +215,7 @@ func (r *OrgReconciler) reconcileTeams(ctx context.Context, org *hyperv1.Org) er
 	return nil
 }
 
-func (r *OrgReconciler) upsertTeam(ctx context.Context, team *hyperv1.Team, orgName string) error {
+func (r *OrgReconciler) upsertTeam(ctx context.Context, team *hyperv1.Team, orgName string, policy hyperv1.TeamMemberPolicy) error {
 	logger := log.FromContext(ctx)
 	teams, _, err := r.h.SearchOrgTeams(orgName, &g.SearchTeamsOptions{})
 	if err != nil {
@@ -223,31 +229,7 @@ func (r *OrgReconciler) upsertTeam(ctx context.Context, team *hyperv1.Team, orgN
 			matched = true
 		}
 	}
-	var perm g.AccessMode
-	switch team.Permission {
-	case "owner":
-		perm = g.AccessModeOwner
-	case "admin":
-		perm = g.AccessModeAdmin
-	case "write":
-		perm = g.AccessModeWrite
-	case "read":
-		perm = g.AccessModeRead
-	default:
-		perm = g.AccessModeNone
-	}
-	units := []g.RepoUnitType{
-		g.RepoUnitCode,
-		g.RepoUnitIssues,
-		g.RepoUnitPulls,
-		g.RepoUnitExtIssues,
-		g.RepoUnitWiki,
-		g.RepoUnitExtWiki,
-		g.RepoUnitReleases,
-		g.RepoUnitProjects,
-		g.RepoUnitPackages,
-		g.RepoUnitActions,
-	}
+	access := teamAccessFor(team)
 	if matched {
 		fetched, res, err := r.h.GetTeam(id)
 		if err != nil && res.StatusCode != 404 {
@@ -255,7 +237,7 @@ func (r *OrgReconciler) upsertTeam(ctx context.Context, team *hyperv1.Team, orgN
 		}
 		want := &g.Team{}
 		if res.StatusCode == 200 {
-			if err := r.reconcileMembers(ctx, team, id); err != nil {
+			if err := r.reconcileMembers(ctx, team, id, policy); err != nil {
 				return err
 			}
 			if !compareTeams(want, fetched) {
@@ -263,9 +245,10 @@ func (r *OrgReconciler) upsertTeam(ctx context.Context, team *hyperv1.Team, orgN
 					Description:             &team.Description,
 					CanCreateOrgRepo:        &team.CreateOrgRepo,
 					IncludesAllRepositories: &team.IncludeAllRepos,
-					Permission:              perm,
+					Permission:              access.Permission,
 					Name:                    team.Name,
-					Units:                   units,
+					Units:                   access.Units,
+					UnitsMap:                access.UnitsMap,
 				}); err != nil {
 					logger.Error(err, "failed to update team", "team", team.Name)
 					return err
@@ -279,18 +262,22 @@ func (r *OrgReconciler) upsertTeam(ctx context.Context, team *hyperv1.Team, orgN
 		Description:             team.Description,
 		CanCreateOrgRepo:        team.CreateOrgRepo,
 		IncludesAllRepositories: team.IncludeAllRepos,
-		Permission:              perm,
-		Units:                   units,
+		Permission:              access.Permission,
+		Units:                   access.Units,
+		UnitsMap:                access.UnitsMap,
 	})
 	if err != nil {
 		logger.Error(err, "failed to create team", "team", team.Name)
 		return err
 	}
-	return r.reconcileMembers(ctx, team, t.ID)
+	return r.reconcileMembers(ctx, team, t.ID, policy)
 }
 
-func (r *OrgReconciler) reconcileMembers(ctx context.Context, team *hyperv1.Team, id int64) error {
+func (r *OrgReconciler) reconcileMembers(ctx context.Context, team *hyperv1.Team, id int64, policy hyperv1.TeamMemberPolicy) error {
 	logger := log.FromContext(ctx)
+	if policy == hyperv1.TeamMemberPolicyIgnore {
+		return nil
+	}
 	users, _, err := r.h.ListTeamMembers(id, g.ListTeamMembersOptions{})
 	if err != nil {
 		return err
@@ -310,6 +297,9 @@ func (r *OrgReconciler) reconcileMembers(ctx context.Context, team *hyperv1.Team
 		}
 	}
 	for _, gUser := range users {
+		if policy == hyperv1.TeamMemberPolicyAdditive {
+			break
+		}
 		rem := true
 		for _, user := range team.Members {
 			if user == gUser.UserName {
@@ -362,5 +352,6 @@ func compare(fetch, req *g.Organization) bool {
 func (r *OrgReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&hyperv1.Org{}).
+		Watches(&hyperv1.Auth{}, handler.EnqueueRequestsFromMapFunc(r.orgsForAuth)).
 		Complete(r)
 }
