@@ -1,6 +1,13 @@
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
 
+# Build, test and lint with the Go version named in go.mod, which is also what
+# CI uses. Go only switches automatically to newer toolchains, so without this
+# a newer local Go (e.g. 1.27) is used, and golangci-lint can't read its export
+# data. Override with GOTOOLCHAIN=local to use the installed Go as-is.
+GOTOOLCHAIN ?= go$(shell awk '/^go /{print $$2; exit}' go.mod)
+export GOTOOLCHAIN
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -9,8 +16,8 @@ GOBIN=$(shell go env GOBIN)
 endif
 
 GO := $(shell which go)
-MINIKUBE := $(shell which minikube)
-KUBECTL := $(shell which kubectl)
+MINIKUBE := $(shell command -v minikube)
+KUBECTL := $(shell command -v kubectl)
 
 # CONTAINER_TOOL defines the container tool to be used for building images.
 # Be aware that the target commands are only tested with Docker which is

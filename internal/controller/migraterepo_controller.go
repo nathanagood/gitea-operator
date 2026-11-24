@@ -123,17 +123,9 @@ func (r *MigrateRepoReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 }
 
 func lookupGitService(service string) (g.GitServiceType, error) {
-	switch service {
-	case "git":
-		return g.GitServicePlain, nil
-	case "github":
-		return g.GitServiceGithub, nil
-	case "gitlab":
-		return g.GitServiceGitlab, nil
-	case "gitea":
-		return g.GitServiceGitea, nil
-	case "gogs":
-		return g.GitServiceGogs, nil
+	switch s := g.GitServiceType(service); s {
+	case g.GitServicePlain, g.GitServiceGithub, g.GitServiceGitlab, g.GitServiceGitea, g.GitServiceGogs:
+		return s, nil
 	default:
 		return "", fmt.Errorf("unsupported git service type: %s", service)
 	}
