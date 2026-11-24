@@ -234,6 +234,12 @@ Facts established during testing:
 
 ## Operational notes for agents
 
+- **Build and run on CRC with `make crc-deploy`** (push the image and point the
+  running operator at it) or `make crc-install` (apply namespace, CRDs, RBAC and
+  deployment; use after RBAC/CRD changes or on a fresh cluster). Logic is in
+  `hack/crc.sh`; it refuses to run unless `oc` points at
+  `https://api.crc.testing:6443`. Set `CRC_WATCH_NAMESPACES` for crc-install.
+
 - **Git signing is enforced** (`commit.gpgsign` and `tag.gpgsign` are `true`).
   Signing needs an interactive passphrase, which a non-interactive shell cannot
   supply. Running `git tag <name>` without `-m` also opens an editor and hangs.

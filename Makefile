@@ -234,6 +234,22 @@ deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
+##@ OpenShift Local (CRC)
+
+# hack/crc.sh holds the logic; run `hack/crc.sh help` for its settings
+# (CRC_TAG, CRC_WATCH_NAMESPACES, ...). oc must be logged in to CRC.
+CRC_SCRIPT := hack/crc.sh
+
+.PHONY: crc-push crc-deploy crc-install
+crc-push: manager ## Build the operator image and push it to the CRC registry.
+	$Q CONTAINER_TOOL=podman $(CRC_SCRIPT) push
+
+crc-deploy: manager ## Push the image and point the operator on CRC at it.
+	$Q CONTAINER_TOOL=podman $(CRC_SCRIPT) deploy
+
+crc-install: manager ## Push the image and apply the whole operator (namespace, CRDs, RBAC, deployment) to CRC.
+	$Q CONTAINER_TOOL=podman $(CRC_SCRIPT) install
+
 ##@ Dependencies
 
 ## Location to install dependencies to
