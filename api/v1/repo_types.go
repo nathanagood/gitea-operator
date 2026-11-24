@@ -25,8 +25,20 @@ import (
 
 // RepoSpec defines the desired state of Repo
 type RepoSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// Name of the repository in Gitea. Defaults to metadata.name. Set it when
+	// the Gitea name is not a valid Kubernetes name, or when repositories with
+	// the same name exist in more than one org; by convention metadata.name is
+	// then "<org>-<name>" in lowercase. It cannot be changed after creation.
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9_.-]+$`
+	// +kubebuilder:validation:MaxLength=100
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// Archived makes the repository read-only in Gitea while keeping its data.
+	// Setting it back to false unarchives it. Deleting the Repo resource
+	// instead deletes the repository and everything in it.
+	// +optional
+	Archived bool `json:"archived,omitempty"`
 
 	// a brief explanation of the repo
 	Description string `json:"description,omitempty"`
@@ -81,6 +93,11 @@ type RepoStatus struct {
 // +kubebuilder:subresource:status
 
 // Repo is the Schema for the repoes API
+// +kubebuilder:validation:XValidation:rule="(has(self.spec) && has(self.spec.name) ? self.spec.name : self.metadata.name) == (has(oldSelf.spec) && has(oldSelf.spec.name) ? oldSelf.spec.name : oldSelf.metadata.name)",message="the Gitea repository name (spec.name, or metadata.name when unset) cannot be changed"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.spec) || !has(oldSelf.spec.org) || (has(self.spec) && has(self.spec.org) && self.spec.org.name == oldSelf.spec.org.name)",message="spec.org.name cannot be changed"
+// +kubebuilder:printcolumn:name="Org",type="string",JSONPath=`.spec.org.name`
+// +kubebuilder:printcolumn:name="Gitea Name",type="string",JSONPath=`.spec.name`
+// +kubebuilder:printcolumn:name="Archived",type="boolean",JSONPath=`.spec.archived`
 // +kubebuilder:printcolumn:name="Ready",type="boolean",JSONPath=`.status.provisioned`
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 type Repo struct {
@@ -98,4 +115,13 @@ type RepoList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []Repo `json:"items"`
+}
+
+// GiteaName returns the repository's name in Gitea: spec.name, or
+// metadata.name when that is unset.
+func (r *Repo) GiteaName() string {
+	if r.Spec.Name != "" {
+		return r.Spec.Name
+	}
+	return r.Name
 }

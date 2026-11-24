@@ -143,7 +143,6 @@ Environment variables on the manager deployment:
 | Variable | Default | Purpose |
 |---|---|---|
 | `WATCH_NAMESPACES` | `default,cert-manager` | Comma-separated namespaces the operator watches. Gitea resources outside these are ignored. |
-| `SPOON_IMAGE` | `ghcr.io/hyperspike/gitea-spoon:v0.0.5` | Image for the gitea-spoon sidecar in each Gitea pod. |
 
 ## Getting Started
 

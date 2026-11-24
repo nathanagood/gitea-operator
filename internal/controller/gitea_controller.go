@@ -20,16 +20,20 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"math/big"
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -117,12 +121,13 @@ type GiteaReconciler struct {
 // +kubebuilder:rbac:groups="",resources=serviceaccounts;secrets;services,verbs=create;delete;get;list;watch;update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;patch;update;watch;delete
 // +kubebuilder:rbac:groups="",resources=endpoints,verbs=create;delete;deletecollection;get;list;patch;update;watch
-// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=create;delete;get;list;watch;update
+// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=create;delete;get;list;watch;update;patch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=create;delete;get;list;watch
 // +kubebuilder:rbac:groups=acid.zalan.do,resources=postgresqls,verbs=create;delete;get;list;watch
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=clusters,verbs=create;delete;get;list;watch
-// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=create;delete;get;list;watch
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=create;delete;get;list;watch;update;patch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings;roles,verbs=create;delete;get;list;watch
@@ -292,95 +297,21 @@ set -x
 mkdir -p /data/git/.ssh
 chmod -R 700 /data/git/.ssh
 mkdir -p /data/ssh
-chmod -R 700 /data/
-chown 1000 -R /data 
+# The rootless image runs as a non-root UID that owns what it creates; only
+# root can change the mount's own permissions or chown to the git user.
+if [[ "${GITEA_ROOTLESS:-false}" != "true" ]]; then
+	chmod -R 700 /data/
+	chown 1000 -R /data
+fi
 [ ! -d /data/gitea/conf ] && mkdir -p /data/gitea/conf
 
 # prepare temp directory structure
 mkdir -p "${GITEA_TEMP}"
-chown 1000:1000 "${GITEA_TEMP}"
+if [[ "${GITEA_ROOTLESS:-false}" != "true" ]]; then
+	chown 1000:1000 "${GITEA_TEMP}"
+fi
 chmod ug+rwx "${GITEA_TEMP}"`,
-		"configure_gitea.sh": `#!/usr/bin/env bash
-
-set -euo pipefail
-
-echo '==== BEGIN GITEA CONFIGURATION ===='
-
-{ # try
-	gitea migrate
-} || { # catch
-	echo "Gitea migrate might fail due to database connection...This init-container will try again in a few seconds"
-	exit 1
-}
-
-function test_redis_connection() {
-	local RETRY=0
-	local MAX=30
-
-	echo 'Wait for redis to become available...'
-	until [ "${RETRY}" -ge "${MAX}" ]; do
-		nc -vz -w2 gitea-redis-cluster-headless.default.svc.cluster.local 6379 && break
-		RETRY=$[${RETRY}+1]
-		echo "...not ready yet (${RETRY}/${MAX})"
-	done
-
-	if [ "${RETRY}" -ge "${MAX}" ]; then
-		echo "Redis not reachable after '${MAX}' attempts!"
-		exit 1
-	fi
-}
-
-# test_redis_connection
-
-function configure_admin_user() {
-	local full_admin_list=$(gitea admin user list --admin)
-	local actual_user_table=''
-
-	# We might have distorted output due to warning logs, so we have to detect the actual user table by its headline and trim output above that line
-	local regex="(.*)(ID\s+Username\s+Email\s+IsActive.*)"
-	if [[ "${full_admin_list}" =~ $regex ]]; then
-		actual_user_table=$(echo "${BASH_REMATCH[2]}" | tail -n+2) # tail'ing to drop the table headline
-	else
-		# This code block should never be reached, as long as the output table header remains the same.
-		# If this code block is reached, the regex doesn't match anymore and we probably have to adjust this script.
-
-		echo "ERROR: 'configure_admin_user' was not able to determine the current list of admin users."
-		echo "       Please review the output of 'gitea admin user list --admin' shown below."
-		echo "       If you think it is an issue with the Helm Chart provisioning, file an issue at https://gitea.com/gitea/helm-chart/issues."
-		echo "DEBUG: Output of 'gitea admin user list --admin'"
-		echo "--"
-		echo "${full_admin_list}"
-		echo "--"
-		exit 1
-	fi
-
-	local ACCOUNT_ID=$(echo "${actual_user_table}" | grep -E "\s+${GITEA_ADMIN_USERNAME}\s+" | awk -F " " "{printf \$1}")
-	if [[ -z "${ACCOUNT_ID}" ]]; then
-		echo "No admin user '${GITEA_ADMIN_USERNAME}' found. Creating now..."
-		gitea admin user create --admin --username "${GITEA_ADMIN_USERNAME}" --password "${GITEA_ADMIN_PASSWORD}" --email "gitea@local.domain" --must-change-password=false
-		echo '...created.'
-	else
-		echo "Admin account '${GITEA_ADMIN_USERNAME}' already exist. Running update to sync password..."
-		gitea admin user change-password --username "${GITEA_ADMIN_USERNAME}" --password "${GITEA_ADMIN_PASSWORD} --must-change-password=false"
-		echo '...password sync done.'
-	fi
-}
-
-configure_admin_user
-
-function configure_ldap() {
-        echo 'no ldap configuration... skipping.'
-}
-
-configure_ldap
-
-function configure_oauth() {
-        echo 'no oauth configuration... skipping.'
-}
-
-configure_oauth
-
-echo '==== END GITEA CONFIGURATION ===='`,
+		"configure_gitea.sh": configureGiteaScript,
 	}, false); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -579,6 +510,13 @@ echo '==== END GITEA CONFIGURATION ===='`,
       unset GITEA__SECURITY__SECRET_KEY
       unset GITEA__OAUTH2__JWT_SECRET
       unset GITEA__SERVER__LFS_JWT_SECRET
+    fi
+
+    # The rootless image runs as whatever UID the platform assigns (on
+    # OpenShift, one from the namespace's range). Gitea refuses to start
+    # unless RUN_USER is the user it runs as.
+    if [[ "${GITEA_ROOTLESS:-false}" == "true" ]]; then
+      export GITEA____RUN_USER="$(id -un)"
     fi
 
     environment-to-ini --config $GITEA_APP_INI`,
@@ -1119,7 +1057,13 @@ func (r *GiteaReconciler) getCertManagerIp(ctx context.Context) (string, error) 
 	return "", nil
 }
 
-func (r *GiteaReconciler) detectClusterDomain(ctx context.Context, gitea *hyperv1.Gitea) (string, error) {
+// clusterDomain returns spec.clusterDomain, or detects the domain when it is
+// unset. The result is not written back to the Gitea resource: the spec belongs
+// to whoever applies it (for example ArgoCD), and writing to it causes drift.
+func (r *GiteaReconciler) clusterDomain(ctx context.Context, gitea *hyperv1.Gitea) (string, error) {
+	if gitea.Spec.ClusterDomain != "" {
+		return gitea.Spec.ClusterDomain, nil
+	}
 	logger := log.FromContext(ctx)
 
 	logger.Info("detecting cluster domain")
@@ -1143,11 +1087,6 @@ func (r *GiteaReconciler) detectClusterDomain(ctx context.Context, gitea *hyperv
 			clusterDomain = strings.TrimSuffix(clusterDomain, ".")
 			logger.Info("detected cluster domain", "clusterDomain", clusterDomain)
 		}
-	}
-	gitea.Spec.ClusterDomain = clusterDomain
-	if err := r.Update(ctx, gitea); err != nil {
-		logger.Error(err, "failed to update gitea")
-		return "", err
 	}
 	return clusterDomain, nil
 }
@@ -1189,7 +1128,7 @@ func (r *GiteaReconciler) upsertCertificate(ctx context.Context, gitea *hyperv1.
 
 	logger.Info("upserting certificate")
 
-	clusterDomain, err := r.detectClusterDomain(ctx, gitea)
+	clusterDomain, err := r.clusterDomain(ctx, gitea)
 	if err != nil {
 		logger.Error(err, "failed to detect cluster domain")
 		return err
@@ -1278,8 +1217,7 @@ func (r *GiteaReconciler) upsertGiteaRole(ctx context.Context, gitea *hyperv1.Gi
 			Namespace: gitea.Namespace,
 			Labels:    labels(gitea.Name),
 		},
-		// The gitea-spoon sidecar no longer reconciles Auth resources (the
-		// operator's AuthReconciler does), so the pod needs no API access.
+		// The Gitea pod needs no Kubernetes API access.
 		Rules: []rbacv1.PolicyRule{},
 	}
 	if err := controllerutil.SetControllerReference(gitea, role, r.Scheme); err != nil {
@@ -1746,31 +1684,104 @@ func envUpsert(envs []corev1.EnvVar, env corev1.EnvVar) []corev1.EnvVar {
 func env(in map[string]string) []corev1.EnvVar {
 	cpy := ENV
 	var ret = []corev1.EnvVar{}
-	for k, v := range cpy {
-		ret = envUpsert(ret, corev1.EnvVar{Name: k, Value: v})
+	// Sorted, so the pod template (and its hash) is the same on every reconcile.
+	for _, k := range slices.Sorted(maps.Keys(cpy)) {
+		ret = envUpsert(ret, corev1.EnvVar{Name: k, Value: cpy[k]})
 	}
-	for k, v := range in {
-		ret = envUpsert(ret, corev1.EnvVar{Name: k, Value: v})
+	for _, k := range slices.Sorted(maps.Keys(in)) {
+		ret = envUpsert(ret, corev1.EnvVar{Name: k, Value: in[k]})
 	}
 	return ret
 }
 
+// configureGiteaScript runs in the configure-gitea init container on every pod
+// start. It migrates the database and creates the admin user, or resets its
+// password to the one in the <gitea>-admin Secret if it already exists.
+const configureGiteaScript = `#!/usr/bin/env bash
+
+set -euo pipefail
+
+echo '==== BEGIN GITEA CONFIGURATION ===='
+
+{ # try
+	gitea migrate
+} || { # catch
+	echo "Gitea migrate might fail due to database connection...This init-container will try again in a few seconds"
+	exit 1
+}
+
+function test_redis_connection() {
+	local RETRY=0
+	local MAX=30
+
+	echo 'Wait for redis to become available...'
+	until [ "${RETRY}" -ge "${MAX}" ]; do
+		nc -vz -w2 gitea-redis-cluster-headless.default.svc.cluster.local 6379 && break
+		RETRY=$[${RETRY}+1]
+		echo "...not ready yet (${RETRY}/${MAX})"
+	done
+
+	if [ "${RETRY}" -ge "${MAX}" ]; then
+		echo "Redis not reachable after '${MAX}' attempts!"
+		exit 1
+	fi
+}
+
+# test_redis_connection
+
+function configure_admin_user() {
+	local full_admin_list=$(gitea admin user list --admin)
+	local actual_user_table=''
+
+	# We might have distorted output due to warning logs, so we have to detect the actual user table by its headline and trim output above that line
+	local regex="(.*)(ID\s+Username\s+Email\s+IsActive.*)"
+	if [[ "${full_admin_list}" =~ $regex ]]; then
+		actual_user_table=$(echo "${BASH_REMATCH[2]}" | tail -n+2) # tail'ing to drop the table headline
+	else
+		# This code block should never be reached, as long as the output table header remains the same.
+		# If this code block is reached, the regex doesn't match anymore and we probably have to adjust this script.
+
+		echo "ERROR: 'configure_admin_user' was not able to determine the current list of admin users."
+		echo "       Please review the output of 'gitea admin user list --admin' shown below."
+		echo "       If you think it is an issue with the Helm Chart provisioning, file an issue at https://gitea.com/gitea/helm-chart/issues."
+		echo "DEBUG: Output of 'gitea admin user list --admin'"
+		echo "--"
+		echo "${full_admin_list}"
+		echo "--"
+		exit 1
+	fi
+
+	local ACCOUNT_ID=$(echo "${actual_user_table}" | grep -E "\s+${GITEA_ADMIN_USERNAME}\s+" | awk -F " " "{printf \$1}")
+	if [[ -z "${ACCOUNT_ID}" ]]; then
+		echo "No admin user '${GITEA_ADMIN_USERNAME}' found. Creating now..."
+		gitea admin user create --admin --username "${GITEA_ADMIN_USERNAME}" --password "${GITEA_ADMIN_PASSWORD}" --email "gitea@local.domain" --must-change-password=false
+		echo '...created.'
+	else
+		echo "Admin account '${GITEA_ADMIN_USERNAME}' already exist. Running update to sync password..."
+		gitea admin user change-password --username "${GITEA_ADMIN_USERNAME}" --password "${GITEA_ADMIN_PASSWORD}" --must-change-password=false
+		echo '...password sync done.'
+	fi
+}
+
+configure_admin_user
+
+function configure_ldap() {
+        echo 'no ldap configuration... skipping.'
+}
+
+configure_ldap
+
+function configure_oauth() {
+        echo 'no oauth configuration... skipping.'
+}
+
+configure_oauth
+
+echo '==== END GITEA CONFIGURATION ===='`
+
 func image(gitea *hyperv1.Gitea) string {
 	//return "gitea/gitea:1.21.11-rootless"
 	return gitea.Spec.Image
-}
-
-// defaultSpoonImage must be a gitea-spoon build without its Auth controller;
-// upstream releases up to v0.0.5 still reconcile Auth and conflict with the
-// operator's AuthReconciler.
-const defaultSpoonImage = "ghcr.io/hyperspike/gitea-spoon:v0.0.5"
-
-// imageSpoon returns the sidecar image, overridable with SPOON_IMAGE.
-func imageSpoon() string {
-	if img := strings.TrimSpace(os.Getenv("SPOON_IMAGE")); img != "" {
-		return img
-	}
-	return defaultSpoonImage
 }
 
 var vol = map[string]string{
@@ -1791,11 +1802,12 @@ func volUpsert(vols []corev1.VolumeMount, vol corev1.VolumeMount) []corev1.Volum
 func volumes(in map[string]string) []corev1.VolumeMount {
 	cpy := vol
 	var ret = []corev1.VolumeMount{}
-	for k, v := range cpy {
-		ret = volUpsert(ret, corev1.VolumeMount{Name: k, MountPath: v})
+	// Sorted, so the pod template (and its hash) is the same on every reconcile.
+	for _, k := range slices.Sorted(maps.Keys(cpy)) {
+		ret = volUpsert(ret, corev1.VolumeMount{Name: k, MountPath: cpy[k]})
 	}
-	for k, v := range in {
-		ret = volUpsert(ret, corev1.VolumeMount{Name: k, MountPath: v})
+	for _, k := range slices.Sorted(maps.Keys(in)) {
+		ret = volUpsert(ret, corev1.VolumeMount{Name: k, MountPath: in[k]})
 	}
 
 	return ret
@@ -2039,8 +2051,8 @@ func (r *GiteaReconciler) upsertPDB(ctx context.Context, gitea *hyperv1.Gitea) e
 	return nil
 }
 
-func (r *GiteaReconciler) upsertGiteaSts(ctx context.Context, gitea *hyperv1.Gitea) error {
-	logger := log.FromContext(ctx)
+// giteaStatefulSet returns the desired StatefulSet for the Gitea instance.
+func giteaStatefulSet(gitea *hyperv1.Gitea) *appsv1.StatefulSet {
 	disk := resource.NewQuantity(50*1024*1024*1024, resource.BinarySI)
 	scheme := corev1.URISchemeHTTP
 	if gitea.Spec.TLS {
@@ -2154,48 +2166,6 @@ func (r *GiteaReconciler) upsertGiteaSts(ctx context.Context, gitea *hyperv1.Git
 								},
 							},
 						},
-						{
-							Name:         "gitea-spoon",
-							Image:        imageSpoon(),
-							Env:          env(map[string]string{"HOME": "/data/gitea/git", "TMPDIR": "/tmp/gitea"}),
-							VolumeMounts: volumes(nil),
-							Command: []string{
-								"/manager",
-							},
-							Args: []string{
-								"--metrics-bind-address=:8443",
-								"--health-probe-bind-address=:8081",
-							},
-							LivenessProbe: &corev1.Probe{
-								ProbeHandler: corev1.ProbeHandler{
-									HTTPGet: &corev1.HTTPGetAction{
-										Path: "/healthz",
-										Port: intstr.FromInt(8081),
-									},
-								},
-								InitialDelaySeconds: 8,
-								PeriodSeconds:       5,
-							},
-							ReadinessProbe: &corev1.Probe{
-								ProbeHandler: corev1.ProbeHandler{
-									HTTPGet: &corev1.HTTPGetAction{
-										Path: "/readyz",
-										Port: intstr.FromInt(8081),
-									},
-								},
-								InitialDelaySeconds: 5,
-								PeriodSeconds:       5,
-							},
-							SecurityContext: &corev1.SecurityContext{
-								RunAsUser:                ptrInt(1000),
-								AllowPrivilegeEscalation: ptrBool(false),
-								Capabilities: &corev1.Capabilities{
-									Drop: []corev1.Capability{
-										"ALL",
-									},
-								},
-							},
-						},
 					},
 					Volumes: []corev1.Volume{
 						{
@@ -2263,7 +2233,6 @@ func (r *GiteaReconciler) upsertGiteaSts(ctx context.Context, gitea *hyperv1.Git
 		},
 	}
 	sts.Spec.Template.Spec.InitContainers[2].Env = append(sts.Spec.Template.Spec.InitContainers[2].Env, admins...)
-	sts.Spec.Template.Spec.Containers[1].Env = append(sts.Spec.Template.Spec.Containers[1].Env, admins...)
 	if gitea.Spec.TLS {
 		sts.Spec.Template.Spec.Volumes = append(sts.Spec.Template.Spec.Volumes, corev1.Volume{
 			Name: TLS,
@@ -2378,7 +2347,6 @@ func (r *GiteaReconciler) upsertGiteaSts(ctx context.Context, gitea *hyperv1.Git
 	sts.Spec.Template.Spec.InitContainers[1].Env = append(sts.Spec.Template.Spec.InitContainers[1].Env, dbs...)
 	sts.Spec.Template.Spec.InitContainers[2].Env = append(sts.Spec.Template.Spec.InitContainers[2].Env, dbs...)
 	sts.Spec.Template.Spec.Containers[0].Env = append(sts.Spec.Template.Spec.Containers[0].Env, dbs...)
-	sts.Spec.Template.Spec.Containers[1].Env = append(sts.Spec.Template.Spec.Containers[1].Env, dbs...)
 	envs := []corev1.EnvVar{
 		{
 			Name:  "GITEA__SERVER__START_SSH_SERVER",
@@ -2393,39 +2361,161 @@ func (r *GiteaReconciler) upsertGiteaSts(ctx context.Context, gitea *hyperv1.Git
 			Value: "INFO",
 		},
 	}
-	sts.Spec.Template.Spec.Containers[0].Env = append(sts.Spec.Template.Spec.Containers[0].Env, envs...)
-	if err := controllerutil.SetControllerReference(gitea, sts, r.Scheme); err != nil {
+	gitea0 := &sts.Spec.Template.Spec.Containers[0]
+	gitea0.ReadinessProbe = gitea0.LivenessProbe.DeepCopy()
+	if gitea.Spec.Rootless {
+		// No START_SSH_SERVER=false here: the rootless image has no OpenSSH,
+		// so Gitea's built-in SSH server listens on SSH_LISTEN_PORT instead.
+		makeRootless(&sts.Spec.Template.Spec)
+	} else {
+		gitea0.Env = append(gitea0.Env, envs...)
+	}
+	return sts
+}
+
+// makeRootless runs every container as a non-root user with no added
+// capabilities and no privilege escalation, which OpenShift's default
+// restricted-v2 SCC admits. The UID and fsGroup are left to the platform (on
+// OpenShift, taken from the namespace's range); the init scripts set Gitea's
+// RUN_USER to match. Use a "-rootless" Gitea image with this.
+func makeRootless(pod *corev1.PodSpec) {
+	pod.SecurityContext = &corev1.PodSecurityContext{
+		RunAsNonRoot:   ptrBool(true),
+		SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+	}
+	restricted := func() *corev1.SecurityContext {
+		return &corev1.SecurityContext{
+			AllowPrivilegeEscalation: ptrBool(false),
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		}
+	}
+	for i := range pod.InitContainers {
+		c := &pod.InitContainers[i]
+		c.SecurityContext = restricted()
+		c.Env = envUpsert(c.Env, corev1.EnvVar{Name: "GITEA_ROOTLESS", Value: "true"})
+	}
+	for i := range pod.Containers {
+		pod.Containers[i].SecurityContext = restricted()
+	}
+}
+
+// appliedHashAnnotation records the hash of what the operator last applied to
+// an object it manages (the StatefulSet's pod template, the Ingress), so it
+// only writes when that changes.
+const appliedHashAnnotation = "hyperspike.io/applied-hash"
+
+// upsertGiteaSts creates the StatefulSet, or updates its pod template when the
+// desired template has changed (for example a new spec.image). Fields that
+// Kubernetes does not allow to change (selector, volumeClaimTemplates,
+// serviceName) are left as they were created.
+func (r *GiteaReconciler) upsertGiteaSts(ctx context.Context, gitea *hyperv1.Gitea) error {
+	desired := giteaStatefulSet(gitea)
+	hash, err := podTemplateHash(&desired.Spec.Template)
+	if err != nil {
 		return err
 	}
-	err := r.Get(ctx, types.NamespacedName{Name: gitea.Name, Namespace: gitea.Namespace}, sts)
-	if err != nil && errors.IsNotFound(err) {
+	desired.Annotations = map[string]string{appliedHashAnnotation: hash}
+	if err := controllerutil.SetControllerReference(gitea, desired, r.Scheme); err != nil {
+		return err
+	}
+
+	current := &appsv1.StatefulSet{}
+	err = r.Get(ctx, types.NamespacedName{Name: gitea.Name, Namespace: gitea.Namespace}, current)
+	if errors.IsNotFound(err) {
 		r.Recorder.Eventf(gitea, nil, corev1.EventTypeNormal, "Creating",
 			"StatefulSetCreate", "StatefulSet %s is being created", gitea.Name)
-		if err := r.Create(ctx, sts); err != nil {
-			logger.Error(err, "failed to create statefulset")
-			return err
+		if err := r.Create(ctx, desired); err != nil {
+			return fmt.Errorf("creating statefulset %s: %w", gitea.Name, err)
 		}
-	} else {
-		return err
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("getting statefulset %s: %w", gitea.Name, err)
+	}
+	if current.Annotations[appliedHashAnnotation] == hash {
+		return nil
+	}
+
+	applyPodTemplate(current, &desired.Spec.Template, hash)
+	r.Recorder.Eventf(gitea, nil, corev1.EventTypeNormal, "Updating",
+		"StatefulSetUpdate", "StatefulSet %s pod template changed", gitea.Name)
+	if err := r.Update(ctx, current); err != nil {
+		return fmt.Errorf("updating statefulset %s: %w", gitea.Name, err)
 	}
 	return nil
 }
 
-func (r *GiteaReconciler) upsertGiteaIngress(ctx context.Context, gitea *hyperv1.Gitea) error {
-	logger := log.FromContext(ctx)
+// podTemplateHash returns a stable hash of the pod template.
+func podTemplateHash(template *corev1.PodTemplateSpec) (string, error) {
+	return objectHash(template)
+}
+
+// objectHash returns a short, stable hash of the JSON encoding of objs. JSON
+// encodes map keys in sorted order, so equal values always hash the same.
+func objectHash(objs ...any) (string, error) {
+	data, err := json.Marshal(objs)
+	if err != nil {
+		return "", fmt.Errorf("hashing object: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:8]), nil
+}
+
+// applyPodTemplate replaces current's pod template with desired and records
+// hash. Pod template annotations set by others are kept: the Auth controller's
+// restart annotations and `kubectl rollout restart`'s restartedAt would
+// otherwise be removed, restarting Gitea.
+func applyPodTemplate(current *appsv1.StatefulSet, desired *corev1.PodTemplateSpec, hash string) {
+	template := *desired.DeepCopy()
+	annotations := make(map[string]string, len(current.Spec.Template.Annotations)+len(template.Annotations))
+	maps.Copy(annotations, current.Spec.Template.Annotations)
+	maps.Copy(annotations, template.Annotations)
+	if len(annotations) > 0 {
+		template.Annotations = annotations
+	}
+	current.Spec.Template = template
+	if current.Annotations == nil {
+		current.Annotations = map[string]string{}
+	}
+	current.Annotations[appliedHashAnnotation] = hash
+}
+
+// giteaIngress returns the desired Ingress for the Gitea instance.
+func giteaIngress(gitea *hyperv1.Gitea) *netv1.Ingress {
 	hostname := gitea.Spec.Ingress.Host
 	if hostname == "" {
 		hostname = "git.example.com"
 	}
-	annotations := gitea.Spec.Ingress.Annotations
+	className := gitea.Spec.Ingress.ClassName
+	if className == "" {
+		className = "nginx"
+	}
+	// Copy, so the Gitea resource's own map is never modified.
+	annotations := maps.Clone(gitea.Spec.Ingress.Annotations)
 	if gitea.Spec.TLS {
 		if annotations == nil {
 			annotations = map[string]string{}
 		}
 		annotations["nginx.ingress.kubernetes.io/backend-protocol"] = "HTTPS"
 	}
+	tls := []netv1.IngressTLS{{Hosts: []string{hostname}, SecretName: gitea.Name + "-ingress-tls"}}
+	if className == openShiftIngressClass {
+		// Nothing creates <gitea>-ingress-tls on OpenShift, and the router
+		// skips an Ingress whose TLS Secret is missing. Without a TLS section
+		// and with this annotation, it creates an edge Route served with the
+		// router's default certificate, and redirects HTTP to HTTPS. Edge
+		// suits spec.tls false (Gitea serves HTTP); with spec.tls true set
+		// the termination annotation yourself.
+		tls = nil
+		if _, set := annotations[routeTerminationAnnotation]; !set && !gitea.Spec.TLS {
+			if annotations == nil {
+				annotations = map[string]string{}
+			}
+			annotations[routeTerminationAnnotation] = "edge"
+		}
+	}
 	prefix := netv1.PathTypePrefix
-	ing := &netv1.Ingress{
+	return &netv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        gitea.Name,
 			Namespace:   gitea.Namespace,
@@ -2433,7 +2523,7 @@ func (r *GiteaReconciler) upsertGiteaIngress(ctx context.Context, gitea *hyperv1
 			Annotations: annotations,
 		},
 		Spec: netv1.IngressSpec{
-			IngressClassName: ptrString("nginx"),
+			IngressClassName: ptrString(className),
 			Rules: []netv1.IngressRule{
 				{
 					Host: hostname,
@@ -2457,29 +2547,58 @@ func (r *GiteaReconciler) upsertGiteaIngress(ctx context.Context, gitea *hyperv1
 					},
 				},
 			},
-			TLS: []netv1.IngressTLS{
-				{
-					Hosts: []string{
-						hostname,
-					},
-					SecretName: gitea.Name + "-ingress-tls",
-				},
-			},
+			TLS: tls,
 		},
 	}
-	if err := controllerutil.SetControllerReference(gitea, ing, r.Scheme); err != nil {
+}
+
+// openShiftIngressClass is the IngressClass the OpenShift router turns into
+// Routes.
+const openShiftIngressClass = "openshift-default"
+
+// routeTerminationAnnotation sets the TLS termination of the Route OpenShift
+// creates for an Ingress.
+const routeTerminationAnnotation = "route.openshift.io/termination"
+
+// upsertGiteaIngress creates the Ingress, or updates it when the desired
+// Ingress has changed.
+func (r *GiteaReconciler) upsertGiteaIngress(ctx context.Context, gitea *hyperv1.Gitea) error {
+	desired := giteaIngress(gitea)
+	hash, err := objectHash(desired.Spec, desired.Annotations)
+	if err != nil {
 		return err
 	}
-	err := r.Get(ctx, types.NamespacedName{Name: gitea.Name, Namespace: gitea.Namespace}, ing)
-	if err != nil && errors.IsNotFound(err) {
-		if err := r.Create(ctx, ing); err != nil {
-			logger.Error(err, "failed to create ingress")
-			return err
-		} else {
-			logger.Info("created gitea ingress", "IngressName", gitea.Name)
-		}
-	} else {
+	if desired.Annotations == nil {
+		desired.Annotations = map[string]string{}
+	}
+	desired.Annotations[appliedHashAnnotation] = hash
+	if err := controllerutil.SetControllerReference(gitea, desired, r.Scheme); err != nil {
 		return err
+	}
+
+	current := &netv1.Ingress{}
+	err = r.Get(ctx, types.NamespacedName{Name: gitea.Name, Namespace: gitea.Namespace}, current)
+	if errors.IsNotFound(err) {
+		if err := r.Create(ctx, desired); err != nil {
+			return fmt.Errorf("creating ingress %s: %w", gitea.Name, err)
+		}
+		log.FromContext(ctx).Info("created gitea ingress", "IngressName", gitea.Name)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("getting ingress %s: %w", gitea.Name, err)
+	}
+	if current.Annotations[appliedHashAnnotation] == hash {
+		return nil
+	}
+	current.Spec = desired.Spec
+	// Merge, keeping annotations that other tools set on the Ingress.
+	if current.Annotations == nil {
+		current.Annotations = map[string]string{}
+	}
+	maps.Copy(current.Annotations, desired.Annotations)
+	if err := r.Update(ctx, current); err != nil {
+		return fmt.Errorf("updating ingress %s: %w", gitea.Name, err)
 	}
 	return nil
 }
