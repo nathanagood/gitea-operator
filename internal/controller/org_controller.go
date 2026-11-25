@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	g "code.gitea.io/sdk/gitea"
@@ -137,7 +138,7 @@ func (r *OrgReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		if err := r.reconcileTeams(ctx, org); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, r.markProvisioned(ctx, org)
 	}
 	_, _, err = r.h.CreateOrg(g.CreateOrgOption{
 		Name:        org.Name,
@@ -153,15 +154,22 @@ func (r *OrgReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	if err := r.reconcileTeams(ctx, org); err != nil {
 		return ctrl.Result{}, err
 	}
-	if !org.Status.Provisioned {
-		org.Status.Provisioned = true
-		if err := r.Client.Status().Update(ctx, org); err != nil {
-			logger.Error(err, "Failed to update Org status")
-			return ctrl.Result{}, nil
-		}
-	}
+	return ctrl.Result{}, r.markProvisioned(ctx, org)
+}
 
-	return ctrl.Result{}, nil
+// markProvisioned records that the org exists in Gitea and its teams are
+// reconciled. It runs on every successful reconcile, not only the one that
+// creates the org: an org that already existed (adopted, or created by a
+// reconcile that then failed) would otherwise never show as ready.
+func (r *OrgReconciler) markProvisioned(ctx context.Context, org *hyperv1.Org) error {
+	if org.Status.Provisioned {
+		return nil
+	}
+	org.Status.Provisioned = true
+	if err := r.Client.Status().Update(ctx, org); err != nil {
+		return fmt.Errorf("updating status of Org %s: %w", org.Name, err)
+	}
+	return nil
 }
 
 func compareTeams(team1, team2 *g.Team) bool {
