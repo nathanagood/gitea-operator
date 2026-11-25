@@ -35,7 +35,6 @@ jobs:
       uses: actions/setup-go@v7
       with:
         go-version-file: go.mod
-        check-latest: true
     - name: Build Installer
       run: make build-installer IMG=ghcr.io/${{ github.repository}}:${{ github.ref_name }}
     - name: Upload dist/install.yaml to release

@@ -145,6 +145,11 @@ Phase 4 will be a **fresh install** on CRC (delete `gitea-test`,
 1. **Remove gitea-spoon.** Done (see above).
 2. **2a, all checks passing.** Done. The Makefile sets `GOTOOLCHAIN` from
    `go.mod`; CI uses `go-version-file: go.mod` and runs `make test lint` on PRs.
+   Tool versions live only in the Makefile (`## Tool Versions`); the workflows
+   call `make lint` / `make scan-gosec` / `make test`, never a tool's own
+   action, so CI and local runs match. setup-envtest and the envtest
+   Kubernetes version are derived from controller-runtime and k8s.io/api in
+   `go.mod`. Bump golangci-lint by editing `GOLANGCI_LINT_VERSION` only.
    The 6 scaffold envtest specs were deleted; `goconst` is off for tests.
    Verify envtest really runs with `GOFLAGS=-v make test` (expect "Ran N of N").
    An invalid CRD makes BeforeSuite fail and skips every spec.

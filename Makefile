@@ -33,7 +33,8 @@ SHELL = /usr/bin/env bash -o pipefail
 K8S_VERSION ?= 1.35.0
 CILIUM_VERSION ?= 1.18.5
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
-ENVTEST_K8S_VERSION ?= $(K8S_VERSION)
+# It follows the k8s.io/api version in go.mod (v0.N.x is Kubernetes 1.N).
+ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
 
 V ?= 0
 ifeq ($(V), 1)
@@ -99,8 +100,8 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 	$Q$(GOLANGCI_LINT) run --fix
 
 .PHONY: scan-gosec
-scan-gosec: gosec ## Run gosec for static security scanning
-	$Q$(GOSEC) ./...
+scan-gosec: gosec ## Run gosec for static security scanning (extra flags in GOSEC_ARGS)
+	$Q$(GOSEC) $(GOSEC_ARGS) ./...
 
 ##@ Build
 
@@ -266,11 +267,14 @@ GOLANGCI_LINT = $(LOCALBIN)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 GOSEC ?= $(LOCALBIN)/gosec-$(GOSEC_VERSION)
 
 ## Tool Versions
+# These are the only place tool versions are set: the GitHub workflows run the
+# tools through these targets, so CI and local builds always match.
 KUSTOMIZE_VERSION ?= v5.8.0
 CONTROLLER_TOOLS_VERSION ?= v0.20.0
-ENVTEST_VERSION ?= release-0.19
-GOLANGCI_LINT_VERSION ?= v2.12.2
-GOSEC_VERSION ?= v2.24.7
+# setup-envtest follows the controller-runtime version in go.mod.
+ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
+GOLANGCI_LINT_VERSION ?= v2.15.0
+GOSEC_VERSION ?= v2.30.0
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
