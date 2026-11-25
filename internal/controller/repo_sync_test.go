@@ -106,7 +106,7 @@ func TestSyncRepoCreatesMissingRepoUnderSpecName(t *testing.T) {
 		Mirror: &hyperv1.MirrorSpec{RemoteURL: "https://example.com/m.git"},
 	})
 
-	if err := syncRepo(context.Background(), api, repo); err != nil {
+	if err := syncRepo(context.Background(), api, "itz", repo); err != nil {
 		t.Fatal(err)
 	}
 	if len(api.creates) != 1 || api.creates[0].Name != "auto-ocpv" || api.creates[0].DefaultBranch != "main" {
@@ -127,7 +127,7 @@ func TestSyncRepoLeavesMatchingRepoAlone(t *testing.T) {
 	api := newFakeRepoAPI(&g.Repository{FullName: "itz/tools", Description: "d", Private: true})
 	repo := newRepo("itz-tools", hyperv1.RepoSpec{Name: "tools", Description: "d", Private: true})
 
-	if err := syncRepo(context.Background(), api, repo); err != nil {
+	if err := syncRepo(context.Background(), api, "itz", repo); err != nil {
 		t.Fatal(err)
 	}
 	if len(api.creates)+len(api.edits)+len(api.mirrors) != 0 {
@@ -139,7 +139,7 @@ func TestSyncRepoAppliesOnlyChangedFields(t *testing.T) {
 	api := newFakeRepoAPI(&g.Repository{FullName: "itz/tools", Description: "old", Private: true})
 	repo := newRepo("itz-tools", hyperv1.RepoSpec{Name: "tools", Description: "new", Private: true})
 
-	if err := syncRepo(context.Background(), api, repo); err != nil {
+	if err := syncRepo(context.Background(), api, "itz", repo); err != nil {
 		t.Fatal(err)
 	}
 	if len(api.edits) != 1 {
@@ -155,7 +155,7 @@ func TestSyncRepoArchivesAndUnarchives(t *testing.T) {
 	api := newFakeRepoAPI(&g.Repository{FullName: "itz/tools"})
 	repo := newRepo("itz-tools", hyperv1.RepoSpec{Name: "tools", Archived: true})
 
-	if err := syncRepo(context.Background(), api, repo); err != nil {
+	if err := syncRepo(context.Background(), api, "itz", repo); err != nil {
 		t.Fatal(err)
 	}
 	if !api.repos["itz/tools"].Archived {
@@ -163,7 +163,7 @@ func TestSyncRepoArchivesAndUnarchives(t *testing.T) {
 	}
 
 	repo.Spec.Archived = false
-	if err := syncRepo(context.Background(), api, repo); err != nil {
+	if err := syncRepo(context.Background(), api, "itz", repo); err != nil {
 		t.Fatal(err)
 	}
 	if api.repos["itz/tools"].Archived {
@@ -175,7 +175,7 @@ func TestSyncRepoCreatesThenArchives(t *testing.T) {
 	api := newFakeRepoAPI()
 	repo := newRepo("itz-old", hyperv1.RepoSpec{Name: "old", Archived: true})
 
-	if err := syncRepo(context.Background(), api, repo); err != nil {
+	if err := syncRepo(context.Background(), api, "itz", repo); err != nil {
 		t.Fatal(err)
 	}
 	if len(api.creates) != 1 || !api.repos["itz/old"].Archived {
@@ -187,7 +187,7 @@ func TestSyncRepoReturnsGetErrorsOtherThanNotFound(t *testing.T) {
 	api := newFakeRepoAPI()
 	api.getErr = errors.New("boom")
 
-	if err := syncRepo(context.Background(), api, newRepo("itz-tools", hyperv1.RepoSpec{})); err == nil {
+	if err := syncRepo(context.Background(), api, "itz", newRepo("itz-tools", hyperv1.RepoSpec{})); err == nil {
 		t.Fatal("expected an error")
 	}
 	if len(api.creates) != 0 {

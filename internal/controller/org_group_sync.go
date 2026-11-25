@@ -39,7 +39,7 @@ func teamsMappedFromAuths(org *hyperv1.Org, auths []hyperv1.Auth) groupMappedTea
 		}
 		for _, orgTeams := range auth.Spec.GroupTeamMap {
 			for orgName, teams := range orgTeams {
-				if !strings.EqualFold(orgName, org.Name) {
+				if !strings.EqualFold(orgName, org.GiteaName()) {
 					continue
 				}
 				for _, team := range teams {

@@ -25,8 +25,14 @@ import (
 
 // OrgSpec defines the desired state of Org
 type OrgSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// The organization's name in Gitea, exactly as Gitea shows it (for
+	// example "ITZ"). Defaults to metadata.name. Set it when the Gitea name is
+	// not a valid Kubernetes name, such as one with capital letters. Only its
+	// letter case can be changed once set (Gitea names are case-insensitive).
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9_.-]+$`
+	// +kubebuilder:validation:MaxLength=40
+	// +optional
+	Name string `json:"name,omitempty"`
 
 	// The human readable name of the organization.
 	FullName string `json:"fullname,omitempty"`
@@ -106,6 +112,8 @@ const (
 // +kubebuilder:subresource:status
 
 // Org is the Schema for the orgs API
+// +kubebuilder:validation:XValidation:rule="(has(self.spec) && has(self.spec.name) ? self.spec.name : self.metadata.name).lowerAscii() == (has(oldSelf.spec) && has(oldSelf.spec.name) ? oldSelf.spec.name : oldSelf.metadata.name).lowerAscii()",message="the Gitea organization name (spec.name, or metadata.name when unset) cannot be changed, except for its letter case"
+// +kubebuilder:printcolumn:name="Gitea Name",type="string",JSONPath=`.spec.name`
 // +kubebuilder:printcolumn:name="Ready",type="boolean",JSONPath=`.status.provisioned`
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 type Org struct {
@@ -123,4 +131,13 @@ type OrgList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []Org `json:"items"`
+}
+
+// GiteaName returns the organization's name in Gitea: spec.name, or
+// metadata.name when that is unset.
+func (o *Org) GiteaName() string {
+	if o.Spec.Name != "" {
+		return o.Spec.Name
+	}
+	return o.Name
 }
