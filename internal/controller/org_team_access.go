@@ -36,10 +36,10 @@ type teamAccess struct {
 // `units`; it rejects a team with neither. The SDK also rejects permission
 // "none", so per-unit teams send read, which Gitea ignores in favour of the map.
 func teamAccessFor(team *hyperv1.Team) teamAccess {
-	switch team.Permission {
-	case "owner":
+	switch g.AccessMode(team.Permission) {
+	case g.AccessModeOwner:
 		return teamAccess{Permission: g.AccessModeOwner, Units: allTeamUnits}
-	case "admin":
+	case g.AccessModeAdmin:
 		return teamAccess{Permission: g.AccessModeAdmin, Units: allTeamUnits}
 	}
 
@@ -57,7 +57,7 @@ func teamAccessFor(team *hyperv1.Team) teamAccess {
 	}
 
 	perm := g.AccessModeRead
-	if team.Permission == "write" {
+	if g.AccessMode(team.Permission) == g.AccessModeWrite {
 		perm = g.AccessModeWrite
 	}
 	units := allTeamUnits

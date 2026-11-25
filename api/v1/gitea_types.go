@@ -39,7 +39,11 @@ type GiteaSpec struct {
 	// if different from Hostname
 	SSHHostname string `json:"sshHostname,omitempty"`
 
-	// enable rootless mode, disable for minikube
+	// Rootless runs Gitea without root or added capabilities, so on OpenShift
+	// the pod runs under the default restricted-v2 SCC with no extra grants.
+	// Requires a rootless Gitea image (for example gitea/gitea:1.27.3-rootless).
+	// The UID comes from the platform; on plain Kubernetes the data volume must
+	// be writable by the image's user (1000).
 	// +kubebuilder:default:=false
 	Rootless bool `json:"rootless,omitempty"`
 
@@ -70,6 +74,10 @@ type GiteaSpec struct {
 	// +kubebuilder:validation:Enum=ClusterIssuer;Issuer
 	CertIssuerType string `json:"certIssuerType,omitempty"`
 
+	// ClusterDomain is the cluster's DNS domain, used in the TLS certificate's
+	// DNS names. It is detected when unset, and the detected value is not
+	// written back here.
+	// +optional
 	ClusterDomain string `json:"clusterDomain,omitempty"`
 
 	// Postgres Configuration
@@ -103,6 +111,13 @@ type IngressSpec struct {
 
 	// Ingress Annotations
 	Annotations map[string]string `json:"annotations,omitempty"`
+
+	// IngressClassName of the Ingress. Defaults to "nginx", which serves TLS
+	// from the Secret "<gitea>-ingress-tls". On OpenShift use
+	// "openshift-default": the router turns the Ingress into a Route that
+	// serves TLS with the router's default certificate.
+	// +optional
+	ClassName string `json:"className,omitempty"`
 }
 
 // GiteaStatus defines the observed state of Gitea

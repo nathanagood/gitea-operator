@@ -40,10 +40,10 @@ jobs:
       with:
         images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ env.RELEASE_VERSION }}
 
-    - name: Setup Go ${{ matrix.go-version }}
+    - name: Setup Go
       uses: actions/setup-go@v7
       with:
-        go-version: 1.26
+        go-version-file: go.mod
     # You can test your matrix by printing the current Go version
     - name: Display Go version
       run: go version
@@ -68,7 +68,7 @@ jobs:
         cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ env.RELEASE_VERSION }}@${{ steps.docker_build.outputs.digest }}
 
     - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
+      uses: aquasecurity/trivy-action@v0.36.0
       with:
         image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ env.RELEASE_VERSION }}'
         format: 'sarif'

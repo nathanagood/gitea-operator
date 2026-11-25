@@ -1,6 +1,13 @@
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
 
+# Build, test and lint with the Go version named in go.mod, which is also what
+# CI uses. Go only switches automatically to newer toolchains, so without this
+# a newer local Go (e.g. 1.27) is used, and golangci-lint can't read its export
+# data. Override with GOTOOLCHAIN=local to use the installed Go as-is.
+GOTOOLCHAIN ?= go$(shell awk '/^go /{print $$2; exit}' go.mod)
+export GOTOOLCHAIN
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -9,8 +16,8 @@ GOBIN=$(shell go env GOBIN)
 endif
 
 GO := $(shell which go)
-MINIKUBE := $(shell which minikube)
-KUBECTL := $(shell which kubectl)
+MINIKUBE := $(shell command -v minikube)
+KUBECTL := $(shell command -v kubectl)
 
 # CONTAINER_TOOL defines the container tool to be used for building images.
 # Be aware that the target commands are only tested with Docker which is
@@ -26,7 +33,8 @@ SHELL = /usr/bin/env bash -o pipefail
 K8S_VERSION ?= 1.35.0
 CILIUM_VERSION ?= 1.18.5
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
-ENVTEST_K8S_VERSION ?= $(K8S_VERSION)
+# It follows the k8s.io/api version in go.mod (v0.N.x is Kubernetes 1.N).
+ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
 
 V ?= 0
 ifeq ($(V), 1)
@@ -92,8 +100,8 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 	$Q$(GOLANGCI_LINT) run --fix
 
 .PHONY: scan-gosec
-scan-gosec: gosec ## Run gosec for static security scanning
-	$Q$(GOSEC) ./...
+scan-gosec: gosec ## Run gosec for static security scanning (extra flags in GOSEC_ARGS)
+	$Q$(GOSEC) $(GOSEC_ARGS) ./...
 
 ##@ Build
 
@@ -227,6 +235,22 @@ deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
+##@ OpenShift Local (CRC)
+
+# hack/crc.sh holds the logic; run `hack/crc.sh help` for its settings
+# (CRC_TAG, CRC_WATCH_NAMESPACES, ...). oc must be logged in to CRC.
+CRC_SCRIPT := hack/crc.sh
+
+.PHONY: crc-push crc-deploy crc-install
+crc-push: manager ## Build the operator image and push it to the CRC registry.
+	$Q CONTAINER_TOOL=podman $(CRC_SCRIPT) push
+
+crc-deploy: manager ## Push the image and point the operator on CRC at it.
+	$Q CONTAINER_TOOL=podman $(CRC_SCRIPT) deploy
+
+crc-install: manager ## Push the image and apply the whole operator (namespace, CRDs, RBAC, deployment) to CRC.
+	$Q CONTAINER_TOOL=podman $(CRC_SCRIPT) install
+
 ##@ Dependencies
 
 ## Location to install dependencies to
@@ -243,11 +267,14 @@ GOLANGCI_LINT = $(LOCALBIN)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 GOSEC ?= $(LOCALBIN)/gosec-$(GOSEC_VERSION)
 
 ## Tool Versions
+# These are the only place tool versions are set: the GitHub workflows run the
+# tools through these targets, so CI and local builds always match.
 KUSTOMIZE_VERSION ?= v5.8.0
 CONTROLLER_TOOLS_VERSION ?= v0.20.0
-ENVTEST_VERSION ?= release-0.19
-GOLANGCI_LINT_VERSION ?= v2.12.2
-GOSEC_VERSION ?= v2.24.7
+# setup-envtest follows the controller-runtime version in go.mod.
+ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
+GOLANGCI_LINT_VERSION ?= v2.15.0
+GOSEC_VERSION ?= v2.30.0
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.

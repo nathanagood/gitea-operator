@@ -77,7 +77,7 @@ func (r *OrgReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, err
 	}
 	if h == nil && gitea == nil {
-		return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 5}, nil
+		return ctrl.Result{RequeueAfter: time.Second * 5}, nil
 	}
 	r.h = h
 	isRepoMarkedToBeDeleted := org.GetDeletionTimestamp() != nil
@@ -110,7 +110,7 @@ func (r *OrgReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		website = "https://" + gitea.Spec.Ingress.Host + "/" + org.Name
 	}
 	want := &g.Organization{
-		UserName:    org.Name,
+		Name:        org.Name,
 		FullName:    org.Spec.FullName,
 		Description: org.Spec.Description,
 		Website:     website,

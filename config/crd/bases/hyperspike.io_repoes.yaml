@@ -15,6 +15,15 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - jsonPath: .spec.org.name
+      name: Org
+      type: string
+    - jsonPath: .spec.name
+      name: Gitea Name
+      type: string
+    - jsonPath: .spec.archived
+      name: Archived
+      type: boolean
     - jsonPath: .status.provisioned
       name: Ready
       type: boolean
@@ -46,6 +55,12 @@ spec:
           spec:
             description: RepoSpec defines the desired state of Repo
             properties:
+              archived:
+                description: |-
+                  Archived makes the repository read-only in Gitea while keeping its data.
+                  Setting it back to false unarchives it. Deleting the Repo resource
+                  instead deletes the repository and everything in it.
+                type: boolean
               auto_init:
                 description: Whether the repository should be auto-intialized?
                 type: boolean
@@ -64,6 +79,15 @@ spec:
                 type: string
               license:
                 description: License to use
+                type: string
+              name:
+                description: |-
+                  Name of the repository in Gitea. Defaults to metadata.name. Set it when
+                  the Gitea name is not a valid Kubernetes name, or when repositories with
+                  the same name exist in more than one org; by convention metadata.name is
+                  then "<org>-<name>" in lowercase. It cannot be changed after creation.
+                maxLength: 100
+                pattern: ^[A-Za-z0-9_.-]+$
                 type: string
               org:
                 properties:
@@ -138,6 +162,15 @@ spec:
             - provisioned
             type: object
         type: object
+        x-kubernetes-validations:
+        - message: the Gitea repository name (spec.name, or metadata.name when unset)
+            cannot be changed
+          rule: '(has(self.spec) && has(self.spec.name) ? self.spec.name : self.metadata.name)
+            == (has(oldSelf.spec) && has(oldSelf.spec.name) ? oldSelf.spec.name :
+            oldSelf.metadata.name)'
+        - message: spec.org.name cannot be changed
+          rule: '!has(oldSelf.spec) || !has(oldSelf.spec.org) || (has(self.spec) &&
+            has(self.spec.org) && self.spec.org.name == oldSelf.spec.org.name)'
     served: true
     storage: true
     subresources:

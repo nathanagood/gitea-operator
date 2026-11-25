@@ -156,10 +156,10 @@ func (r *AuthReconciler) applySource(ctx context.Context, gitea *hyperv1.Gitea, 
 	var args []string
 	if existing == nil {
 		logger.Info("adding authentication source", "name", sourceName(auth))
-		args = append([]string{"admin", "auth", "add-oauth"}, flags...)
+		args = authCommand("add-oauth", flags...)
 	} else {
 		logger.Info("updating authentication source", "name", sourceName(auth), "id", existing.ID)
-		args = append([]string{"admin", "auth", "update-oauth", "--id", strconv.FormatInt(existing.ID, 10)}, flags...)
+		args = authCommand("update-oauth", append([]string{"--id", strconv.FormatInt(existing.ID, 10)}, flags...)...)
 	}
 	if _, err := r.runGitea(ctx, pod, args, clientID, clientSecret); err != nil {
 		return err
@@ -188,7 +188,7 @@ func (r *AuthReconciler) deleteSource(ctx context.Context, gitea *hyperv1.Gitea,
 		return nil
 	}
 	if auth.Status.SourceID != 0 {
-		args := []string{"admin", "auth", "delete", "--id", strconv.FormatInt(auth.Status.SourceID, 10)}
+		args := authCommand("delete", "--id", strconv.FormatInt(auth.Status.SourceID, 10))
 		if _, err := r.runGitea(ctx, pod, args, "", ""); err != nil {
 			return fmt.Errorf("deleting authentication source %d: %w", auth.Status.SourceID, err)
 		}
@@ -274,14 +274,19 @@ func (r *AuthReconciler) runGitea(ctx context.Context, pod *corev1.Pod, args []s
 		withCredentials = "1"
 	}
 	script := "WITH_CREDENTIALS=" + withCredentials + "\n" + giteaCLIWrapper
-	command := append([]string{"/bin/sh", "-c", script, "gitea"}, args...)
+	command := append([]string{"/bin/sh", "-c", script, Gitea}, args...)
 	stdin := strings.NewReader(clientID + "\n" + clientSecret + "\n")
 	return r.Executor.Exec(ctx, pod.Namespace, pod.Name, Gitea, command, stdin)
 }
 
+// authCommand returns the arguments for `gitea admin auth <subcommand> <args>`.
+func authCommand(subcommand string, args ...string) []string {
+	return append([]string{"admin", "auth", subcommand}, args...)
+}
+
 // findSource returns the source with the given name, or nil when absent.
 func (r *AuthReconciler) findSource(ctx context.Context, pod *corev1.Pod, name string) (*giteaAuthSource, error) {
-	out, err := r.runGitea(ctx, pod, []string{"admin", "auth", "list"}, "", "")
+	out, err := r.runGitea(ctx, pod, authCommand("list"), "", "")
 	if err != nil {
 		return nil, fmt.Errorf("listing authentication sources: %w", err)
 	}
