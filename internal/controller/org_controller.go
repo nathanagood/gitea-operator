@@ -108,24 +108,24 @@ func (r *OrgReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	}
 	website := org.Spec.Website
 	if website == "" && gitea.Spec.Ingress.Host != "" {
-		website = "https://" + gitea.Spec.Ingress.Host + "/" + org.Name
+		website = "https://" + gitea.Spec.Ingress.Host + "/" + org.GiteaName()
 	}
 	want := &g.Organization{
-		Name:        org.Name,
+		Name:        org.GiteaName(),
 		FullName:    org.Spec.FullName,
 		Description: org.Spec.Description,
 		Website:     website,
 		Location:    org.Spec.Location,
 		Visibility:  org.Spec.Visibility,
 	}
-	o, resp, err := h.GetOrg(org.Name)
+	o, resp, err := h.GetOrg(org.GiteaName())
 	if err != nil && resp.StatusCode != 404 {
 		return ctrl.Result{}, err
 	}
 	if resp.StatusCode == 200 {
 		if !compare(want, o) {
 			logger.Info("updating org")
-			if _, err := r.h.EditOrg(org.Name, g.EditOrgOption{
+			if _, err := r.h.EditOrg(org.GiteaName(), g.EditOrgOption{
 				FullName:    org.Spec.FullName,
 				Description: org.Spec.Description,
 				Website:     website,
@@ -141,7 +141,7 @@ func (r *OrgReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, r.markProvisioned(ctx, org)
 	}
 	_, _, err = r.h.CreateOrg(g.CreateOrgOption{
-		Name:        org.Name,
+		Name:        org.GiteaName(),
 		FullName:    org.Spec.FullName,
 		Description: org.Spec.Description,
 		Website:     website,
@@ -193,7 +193,7 @@ func (r *OrgReconciler) reconcileTeams(ctx context.Context, org *hyperv1.Org) er
 	if err != nil {
 		return err
 	}
-	teams, _, err := r.h.SearchOrgTeams(org.Name, &g.SearchTeamsOptions{})
+	teams, _, err := r.h.SearchOrgTeams(org.GiteaName(), &g.SearchTeamsOptions{})
 	if err != nil {
 		return err
 	}
@@ -211,7 +211,7 @@ func (r *OrgReconciler) reconcileTeams(ctx context.Context, org *hyperv1.Org) er
 		}
 	}
 	for _, t := range org.Spec.Teams {
-		if err := r.upsertTeam(ctx, &t, org.Name, effectiveMemberPolicy(&t, mapped)); err != nil {
+		if err := r.upsertTeam(ctx, &t, org.GiteaName(), effectiveMemberPolicy(&t, mapped)); err != nil {
 			return err
 		}
 	}
@@ -332,7 +332,7 @@ func (r *OrgReconciler) reconcileMembers(ctx context.Context, team *hyperv1.Team
 }
 
 func (r *OrgReconciler) deleteOrg(org *hyperv1.Org) error {
-	_, err := r.h.DeleteOrg(org.Name)
+	_, err := r.h.DeleteOrg(org.GiteaName())
 	return err
 }
 

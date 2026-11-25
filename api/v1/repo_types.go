@@ -28,7 +28,8 @@ type RepoSpec struct {
 	// Name of the repository in Gitea. Defaults to metadata.name. Set it when
 	// the Gitea name is not a valid Kubernetes name, or when repositories with
 	// the same name exist in more than one org; by convention metadata.name is
-	// then "<org>-<name>" in lowercase. It cannot be changed after creation.
+	// then "<org>-<name>" in lowercase. Only its letter case can be changed after
+	// creation (Gitea names are case-insensitive).
 	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9_.-]+$`
 	// +kubebuilder:validation:MaxLength=100
 	// +optional
@@ -93,7 +94,7 @@ type RepoStatus struct {
 // +kubebuilder:subresource:status
 
 // Repo is the Schema for the repoes API
-// +kubebuilder:validation:XValidation:rule="(has(self.spec) && has(self.spec.name) ? self.spec.name : self.metadata.name) == (has(oldSelf.spec) && has(oldSelf.spec.name) ? oldSelf.spec.name : oldSelf.metadata.name)",message="the Gitea repository name (spec.name, or metadata.name when unset) cannot be changed"
+// +kubebuilder:validation:XValidation:rule="(has(self.spec) && has(self.spec.name) ? self.spec.name : self.metadata.name).lowerAscii() == (has(oldSelf.spec) && has(oldSelf.spec.name) ? oldSelf.spec.name : oldSelf.metadata.name).lowerAscii()",message="the Gitea repository name (spec.name, or metadata.name when unset) cannot be changed, except for its letter case"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.spec) || !has(oldSelf.spec.org) || (has(self.spec) && has(self.spec.org) && self.spec.org.name == oldSelf.spec.org.name)",message="spec.org.name cannot be changed"
 // +kubebuilder:printcolumn:name="Org",type="string",JSONPath=`.spec.org.name`
 // +kubebuilder:printcolumn:name="Gitea Name",type="string",JSONPath=`.spec.name`

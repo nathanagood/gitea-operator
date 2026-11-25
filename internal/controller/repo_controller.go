@@ -26,6 +26,7 @@ import (
 	g "code.gitea.io/sdk/gitea"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -98,7 +99,11 @@ func (r *RepoReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			return ctrl.Result{}, err
 		}
 	}
-	if err := syncRepo(ctx, h, repo); err != nil {
+	owner, err := r.giteaOwner(ctx, repo)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := syncRepo(ctx, h, owner, repo); err != nil {
 		return ctrl.Result{}, err
 	}
 	if !repo.Status.Provisioned {
@@ -126,11 +131,29 @@ func (r *RepoReconciler) finalize(ctx context.Context, repo *hyperv1.Repo, h *hc
 	case h == nil:
 		return ctrl.Result{RequeueAfter: repoNotReadyRequeue}, nil
 	default:
-		if err := deleteGiteaRepo(h, repo.Spec.Org.Name, repo.GiteaName()); err != nil {
+		owner, err := r.giteaOwner(ctx, repo)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := deleteGiteaRepo(h, owner, repo.GiteaName()); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
 	return ctrl.Result{}, r.removeFinalizer(ctx, repo)
+}
+
+// giteaOwner returns the Gitea name of the org that owns repo: the Org
+// resource's spec.name (for example "ITZ"), or its metadata.name.
+func (r *RepoReconciler) giteaOwner(ctx context.Context, repo *hyperv1.Repo) (string, error) {
+	ns := repo.Spec.Org.Namespace
+	if ns == "" {
+		ns = repo.Namespace
+	}
+	org := &hyperv1.Org{}
+	if err := r.Get(ctx, types.NamespacedName{Name: repo.Spec.Org.Name, Namespace: ns}, org); err != nil {
+		return "", fmt.Errorf("getting Org %s/%s: %w", ns, repo.Spec.Org.Name, err)
+	}
+	return org.GiteaName(), nil
 }
 
 func (r *RepoReconciler) removeFinalizer(ctx context.Context, repo *hyperv1.Repo) error {
@@ -142,8 +165,8 @@ func (r *RepoReconciler) removeFinalizer(ctx context.Context, repo *hyperv1.Repo
 
 // syncRepo creates the org repository if it does not exist, then applies any
 // differences in description, visibility and archived state.
-func syncRepo(ctx context.Context, api repoAPI, repo *hyperv1.Repo) error {
-	owner, name := repo.Spec.Org.Name, repo.GiteaName()
+func syncRepo(ctx context.Context, api repoAPI, owner string, repo *hyperv1.Repo) error {
+	name := repo.GiteaName()
 	current, resp, err := api.GetRepo(owner, name)
 	switch {
 	case err == nil:

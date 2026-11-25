@@ -49,6 +49,12 @@ var _ = Describe("Repo validation", func() {
 		Expect(k8sClient.Update(ctx, repo)).To(Succeed())
 	})
 
+	It("allows fixing the letter case of spec.name", func() {
+		repo := create("itz-core-cbi-safe", hyperv1.RepoSpec{Name: "core-cbi-safe", Org: &hyperv1.OrgRef{Name: "itz"}})
+		repo.Spec.Name = "core-CBI-SAFE"
+		Expect(k8sClient.Update(ctx, repo)).To(Succeed())
+	})
+
 	It("rejects moving a repo to another org", func() {
 		repo := create("itz-docs", hyperv1.RepoSpec{Name: "docs", Org: &hyperv1.OrgRef{Name: "itz"}})
 		repo.Spec.Org.Name = "itz-content"
