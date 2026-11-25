@@ -69,7 +69,7 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 	if h == nil && gitea == nil {
-		return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 5}, nil
+		return ctrl.Result{RequeueAfter: time.Second * 5}, nil
 	}
 	r.h = h
 	isUserMarkedToBeDeleted := user.GetDeletionTimestamp() != nil

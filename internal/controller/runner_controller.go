@@ -81,7 +81,7 @@ func (r *RunnerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 	if token == "" {
 		logger.Info("No token found, requeueing")
-		return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 5}, nil
+		return ctrl.Result{RequeueAfter: time.Second * 5}, nil
 	}
 	if err := r.upsertRunnerSA(ctx, runner); err != nil {
 		logger.Error(err, "failed to upsert Runner Service Account")
